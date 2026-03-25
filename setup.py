@@ -13,7 +13,7 @@ setup(
         description=DESCRIPTION,
         long_description=LONG_DESCRIPTION,
         packages=find_packages(),
-        install_requires=['numpy', 'matplotlib', 'pandas'],
+        install_requires=['numpy', 'matplotlib', 'pandas', 'bokeh>=2.4.1'],
         
         keywords=['python', 'sir', 'model', 'simulation'],
         classifiers= [

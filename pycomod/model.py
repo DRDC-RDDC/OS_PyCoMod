@@ -405,7 +405,7 @@ class Model(ABC):
 
     def wait_step(self, steps = 1):
         
-        return Timestep(steps)
+        return TimeStep(steps)
 
     def wait_time(self, time):
         

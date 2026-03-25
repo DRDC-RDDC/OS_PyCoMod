@@ -12,4 +12,7 @@ __pycache__/
 *.xlsx
 *.bak
 .ipynb_checkpoints/
+*.html
+test_outputs/
 
+.claude/settings.local.json

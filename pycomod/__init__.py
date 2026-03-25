@@ -2,3 +2,4 @@
 from .model import Model
 from .manager import RunManager
 from .plotter import Plotter
+from .export import export_to_html
