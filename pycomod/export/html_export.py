@@ -11,6 +11,7 @@ PyCoMod model into a self-contained HTML file with:
 * Save / Load buttons for persisting inputs to a JSON text file
 """
 
+import base64
 from pathlib import Path
 
 from bokeh.io import output_file, save
@@ -81,32 +82,66 @@ def export_to_html(
     output_file(str(output_filepath), title=title)
     save(layout)
 
-    # Step 5 – Post-process (inject custom CSS) -------------------------------
-    _post_process_html(str(output_filepath))
+    # Step 5 – Post-process (inject header + custom CSS) ---------------------
+    _post_process_html(str(output_filepath), title=title,
+                       banner_image_path=banner_image_path)
 
     return str(output_filepath)
 
 
-def _post_process_html(html_filename: str) -> bool:
-    """Inject custom CSS for banner and input styling."""
+def _build_header_html(title: str, banner_image_path: str | None) -> str:
+    """Build the header HTML with title and optional banner image."""
+    if banner_image_path and Path(banner_image_path).exists():
+        with open(banner_image_path, 'rb') as f:
+            image_data = f.read()
+        encoded = base64.b64encode(image_data).decode('utf-8')
+        ext = Path(banner_image_path).suffix.lower()
+        mime_type = 'image/jpeg' if ext in ['.jpg', '.jpeg'] else 'image/png'
+        banner_section = (
+            '<div style="flex:1 1 auto; overflow:hidden; line-height:0; min-width:0;">'
+            f'<img src="data:{mime_type};base64,{encoded}"'
+            ' style="display:block; width:100%; height:100%; object-fit:cover; object-position:center; margin:0; padding:0;">'
+            '</div>'
+        )
+    else:
+        banner_section = '<div style="flex:1 1 auto;"></div>'
+
+    return (
+        '<div style="display:flex; align-items:stretch; width:100%;'
+        ' background-color:#f0f0f0; border-bottom:2px solid #003366;'
+        ' box-sizing:border-box; margin:0; padding:0;">'
+        '<div style="flex:0 0 auto; padding:4px 15px; display:flex; align-items:center;">'
+        f'<h1 style="margin:0; padding:0; color:#003366; font-family:Arial,sans-serif;'
+        f' white-space:nowrap;">{title}</h1>'
+        '</div>'
+        f'{banner_section}'
+        '</div>'
+    )
+
+
+def _post_process_html(html_filename: str, title: str = '',
+                       banner_image_path: str | None = None) -> bool:
+    """Inject header and custom CSS into the generated HTML file."""
     with open(html_filename, "r", encoding="utf-8") as f:
         html_content = f.read()
 
-    if "</head>" not in html_content:
+    if "<body>" not in html_content or "</head>" not in html_content:
         return False
 
-    injections = """
+    # Inject CSS into <head>
+    css = """
     <style>
+      html, body { margin: 0; padding: 0; width: 100%; }
       .bk-input-group label { font-size: 15px !important; font-weight: 500; }
       .bk-input { font-size: 14px !important; }
       .bk-btn { font-size: 14px !important; }
       .bk-tabs-header .bk-tab { font-size: 15px !important; }
-      .pycomod-banner > div { height: 100% !important; width: 100% !important;
-                              padding: 0 !important; margin: 0 !important; line-height: 0; }
-      .pycomod-banner > div > div { height: 100% !important; width: 100% !important; }
     </style>"""
+    html_content = html_content.replace("</head>", css + "\n  </head>")
 
-    html_content = html_content.replace("</head>", injections + "\n  </head>")
+    # Inject header as first element in <body>, outside Bokeh's layout
+    header_html = _build_header_html(title, banner_image_path)
+    html_content = html_content.replace("<body>", "<body>\n" + header_html)
 
     with open(html_filename, "w", encoding="utf-8") as f:
         f.write(html_content)

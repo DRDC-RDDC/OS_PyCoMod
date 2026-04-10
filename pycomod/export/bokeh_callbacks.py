@@ -11,6 +11,7 @@ class BokehCallbackGenerator:
         self.template_loader = get_loader()
 
     def attach_all_callbacks(self):
+        self._attach_reset_callback()
         self._attach_save_inputs_callback()
         self._attach_load_inputs_callback()
 
@@ -30,6 +31,48 @@ class BokehCallbackGenerator:
         for name, widget in self.ui_generator.input_widgets.items():
             args['input_%s' % name] = widget
         return args
+
+    def _attach_reset_callback(self):
+        args = self._build_common_args()
+
+        run_params = self.model_structure['run_params']
+
+        # Build reset lines for model input widgets
+        input_resets = []
+        for name, widget in self.ui_generator.input_widgets.items():
+            input_resets.append(
+                '    input_%s.value = %s;' % (name, widget.value)
+            )
+
+        # Map tunit back to the Select label used in the UI
+        tunit_str = str(run_params.get('tunit', '1 days'))
+        tunit_map = {
+            'D': 'Days', 'days': 'Days', '1 days': 'Days',
+            'M': 'Months', 'months': 'Months',
+            'Y': 'Years', 'years': 'Years',
+            'h': 'Hours', 'hours': 'Hours',
+        }
+        default_tunit = tunit_map.get(tunit_str, 'Days')
+
+        # Strip time component from date if present
+        date_str = str(run_params.get('date', ''))
+        if ' ' in date_str:
+            date_str = date_str.split(' ')[0]
+
+        callback_code = self.template_loader.render_js_callback(
+            'reset_callback.js',
+            {
+                'INPUT_RESETS': '\n'.join(input_resets),
+                'DEFAULT_DATE': date_str,
+                'DEFAULT_TUNIT': default_tunit,
+                'DEFAULT_DURATION': float(run_params['end']),
+                'DEFAULT_DT': float(run_params['dt']),
+                'DEFAULT_REPS': int(run_params['reps']),
+            }
+        )
+
+        callback = CustomJS(args=args, code=callback_code)
+        self.ui_generator.control_buttons['reset'].js_on_click(callback)
 
     def _attach_save_inputs_callback(self):
         args = self._build_common_args()

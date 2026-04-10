@@ -29,27 +29,17 @@ class BokehUIGenerator:
         self.banner_image_path = banner_image_path
         self.template_loader = get_loader()
 
-        self.banner_div = None
-        self.title_div = None
         self.input_widgets = {}
         self.control_buttons = {}
         self.message_div = None
         self.tabs = None
 
     def generate_layout(self):
-        self._create_banner()
-        self._create_title()
         self._create_model_input_panel()
         self._create_run_input_panel()
         self._create_control_panel()
         self._create_message_panel()
         self._create_tabs()
-
-        header_row = row(
-            self.title_div,
-            self.banner_div,
-            sizing_mode='stretch_width',
-        )
 
         main_panel = column(
             self.tabs,
@@ -58,45 +48,13 @@ class BokehUIGenerator:
         )
 
         full_layout = column(
-            header_row,
             main_panel,
             self.message_div,
             sizing_mode='stretch_both',
+            margin=(0, 0, 0, 0),
         )
 
         return full_layout
-
-    def _create_banner(self):
-        if self.banner_image_path and Path(self.banner_image_path).exists():
-            with open(self.banner_image_path, 'rb') as f:
-                image_data = f.read()
-
-            encoded = base64.b64encode(image_data).decode('utf-8')
-            ext = Path(self.banner_image_path).suffix.lower()
-            mime_type = 'image/jpeg' if ext in ['.jpg', '.jpeg'] else 'image/png'
-
-            banner_html = self.template_loader.render_html_template(
-                'banner.html',
-                {
-                    'MIME_TYPE': mime_type,
-                    'ENCODED_IMAGE': encoded
-                }
-            )
-        else:
-            banner_html = self.template_loader.load_html_template('banner_empty.html')
-
-        self.banner_div = Div(
-            text=banner_html,
-            sizing_mode='stretch_both',
-            css_classes=['pycomod-banner'],
-        )
-
-    def _create_title(self):
-        title_html = self.template_loader.render_html_template(
-            'title.html',
-            {'TITLE': self.title}
-        )
-        self.title_div = Div(text=title_html, sizing_mode='stretch_width')
 
     def _create_model_input_panel(self):
         """Create the Model Inputs panel (pools + parameters)."""
@@ -239,6 +197,18 @@ class BokehUIGenerator:
         ])
 
     def _create_control_panel(self):
+        self.run_model_button = Button(
+            label='Run Model',
+            button_type='success',
+            width=150,
+        )
+
+        self.reset_button = Button(
+            label='Reset',
+            button_type='warning',
+            width=150,
+        )
+
         self.save_inputs_button = Button(
             label='Save Inputs',
             button_type='primary',
@@ -252,15 +222,19 @@ class BokehUIGenerator:
         )
 
         self.control_buttons = {
+            'run_model': self.run_model_button,
+            'reset': self.reset_button,
             'save_inputs': self.save_inputs_button,
             'load_inputs': self.load_inputs_button,
         }
 
-        buttons_row = row(self.save_inputs_button, self.load_inputs_button)
+        top_buttons_row = row(self.run_model_button, self.reset_button)
+        bottom_buttons_row = row(self.save_inputs_button, self.load_inputs_button)
 
         self.control_panel = column(
             Div(text='<hr>'),
-            buttons_row,
+            top_buttons_row,
+            bottom_buttons_row,
             sizing_mode='stretch_width',
         )
 
