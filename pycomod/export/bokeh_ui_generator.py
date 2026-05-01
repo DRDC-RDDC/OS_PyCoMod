@@ -4,18 +4,29 @@ Compatible with Bokeh 2.4.1 and Python 3.9.7.
 """
 
 import base64
-from typing import Dict, Any, Optional
+import re
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from bokeh.layouts import column, row
-from bokeh.models import Div, Button, CustomJS, NumericInput, Select, Tabs, TextInput
+from bokeh.models import (
+    Div, Button, CustomJS, NumericInput, Select, Tabs, TextInput,
+    CheckboxGroup, ColumnDataSource,
+)
+from bokeh.plotting import figure
 
 # Bokeh 2.4.x uses Panel; Bokeh 3.x renamed it to TabPanel
 try:
     from bokeh.models import TabPanel as _TabPanel
 except ImportError:
     from bokeh.models.widgets import Panel as _TabPanel
+
 from .template_loader import get_loader
+
+_COLORS = [
+    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+    '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+]
 
 
 class BokehUIGenerator:
@@ -29,35 +40,50 @@ class BokehUIGenerator:
         self.banner_image_path = banner_image_path
         self.template_loader = get_loader()
 
-        self.input_widgets = {}
-        self.control_buttons = {}
+        self.input_widgets: Dict[str, Any] = {}
+        self.control_buttons: Dict[str, Any] = {}
         self.message_div = None
         self.tabs = None
+
+        # Plot components
+        self.plot_figure = None
+        self.plot_source: Optional[ColumnDataSource] = None
+        self.line_renderers: Dict[str, Any] = {}
+        self.output_checkboxes = None
 
     def generate_layout(self):
         self._create_model_input_panel()
         self._create_run_input_panel()
         self._create_control_panel()
+        self._create_plot_panel()
         self._create_message_panel()
         self._create_tabs()
 
-        main_panel = column(
+        left_panel = column(
             self.tabs,
             self.control_panel,
+            sizing_mode='stretch_width',
+        )
+
+        right_panel = column(
+            self.plot_panel,
             sizing_mode='stretch_both',
         )
 
-        full_layout = column(
-            main_panel,
+        main_content = row(
+            left_panel,
+            right_panel,
+            sizing_mode='stretch_both',
+        )
+
+        return column(
+            main_content,
             self.message_div,
             sizing_mode='stretch_both',
             margin=(0, 0, 0, 0),
         )
 
-        return full_layout
-
     def _create_model_input_panel(self):
-        """Create the Model Inputs panel (pools + parameters)."""
         self.model_input_panel = column(sizing_mode='stretch_width')
 
         if self.model_structure['pools']:
@@ -99,15 +125,12 @@ class BokehUIGenerator:
             self.model_input_panel.children.extend([params_header] + param_widgets)
 
     def _create_run_input_panel(self):
-        """Create the Run Inputs panel (Advanced tab)."""
         self.run_input_panel = column(sizing_mode='stretch_width')
 
         run_header = Div(text='<h3>Run Configuration</h3>')
         run_params = self.model_structure['run_params']
 
-        # --- Start date ---
         date_str = run_params.get('date', '')
-        # Strip time component if present (e.g. "2026-03-25 00:00:00" -> "2026-03-25")
         if ' ' in str(date_str):
             date_str = str(date_str).split(' ')[0]
         self.date_input = TextInput(
@@ -116,8 +139,6 @@ class BokehUIGenerator:
             width=360,
         )
 
-        # --- Time unit ---
-        # Parse tunit string like "1 days" -> "D"
         tunit_str = str(run_params.get('tunit', '1 days'))
         tunit_map = {
             'D': 'Days', 'days': 'Days', '1 days': 'Days',
@@ -133,7 +154,6 @@ class BokehUIGenerator:
             width=360,
         )
 
-        # --- Duration and time step ---
         self.duration_input = NumericInput(
             title='Duration (time units)',
             value=float(run_params['end']),
@@ -148,7 +168,6 @@ class BokehUIGenerator:
             width=360,
         )
 
-        # --- Plot settings ---
         self.xaxis_select = Select(
             title='Plot X-Axis Labels',
             value='Dates',
@@ -162,7 +181,6 @@ class BokehUIGenerator:
             width=360,
         )
 
-        # --- Monte Carlo ---
         self.mode_select = Select(
             title='Run Mode',
             value='Single',
@@ -178,7 +196,6 @@ class BokehUIGenerator:
             disabled=True,
         )
 
-        # Toggle reps_input enabled/disabled when mode changes
         self.mode_select.js_on_change('value', CustomJS(
             args={'reps_input': self.reps_input},
             code='reps_input.disabled = (cb_obj.value !== "Monte Carlo");',
@@ -228,14 +245,66 @@ class BokehUIGenerator:
             'load_inputs': self.load_inputs_button,
         }
 
-        top_buttons_row = row(self.run_model_button, self.reset_button)
-        bottom_buttons_row = row(self.save_inputs_button, self.load_inputs_button)
-
         self.control_panel = column(
             Div(text='<hr>'),
-            top_buttons_row,
-            bottom_buttons_row,
+            row(self.run_model_button, self.reset_button),
+            row(self.save_inputs_button, self.load_inputs_button),
             sizing_mode='stretch_width',
+        )
+
+    def _create_plot_panel(self):
+        outputs: List[str] = self.model_structure.get('outputs', [])
+
+        self.plot_figure = figure(
+            title='Model Output',
+            x_axis_label='Time',
+            y_axis_label='Value',
+            width=800,
+            height=500,
+            tools='pan,wheel_zoom,box_zoom,reset,save',
+            active_drag='pan',
+            active_scroll='wheel_zoom',
+        )
+
+        initial_data: Dict[str, list] = {'time': []}
+        for name in outputs:
+            initial_data[name] = []
+
+        self.plot_source = ColumnDataSource(data=initial_data)
+
+        for i, name in enumerate(outputs):
+            line = self.plot_figure.line(
+                x='time',
+                y=name,
+                source=self.plot_source,
+                line_width=2,
+                line_color=_COLORS[i % len(_COLORS)],
+                legend_label=name,
+                visible=True,
+            )
+            self.line_renderers[name] = line
+
+        if outputs:
+            self.plot_figure.legend.click_policy = 'hide'
+            self.plot_figure.legend.location = 'top_right'
+
+            self.output_checkboxes = CheckboxGroup(
+                labels=outputs,
+                active=list(range(len(outputs))),
+                inline=True,
+            )
+            checkbox_row = column(
+                Div(text='<b>Show/Hide Outputs:</b>'),
+                self.output_checkboxes,
+            )
+        else:
+            self.output_checkboxes = None
+            checkbox_row = Div(text='<i>No outputs defined</i>')
+
+        self.plot_panel = column(
+            self.plot_figure,
+            checkbox_row,
+            sizing_mode='stretch_both',
         )
 
     def _create_message_panel(self):
@@ -243,19 +312,16 @@ class BokehUIGenerator:
         self.message_div = Div(text=message_html, sizing_mode='stretch_width')
 
     def _create_tabs(self):
-        # Tab 1: Model Inputs (pools + parameters)
         inputs_tab = _TabPanel(
             child=self.model_input_panel,
             title='Inputs',
         )
 
-        # Tab 2: Run Inputs (Advanced)
         advanced_tab = _TabPanel(
             child=self.run_input_panel,
             title='Advanced',
         )
 
-        # Tab 3: Help
         if self.help_text:
             help_html = '<div style="padding: 10px;">%s</div>' % self._markdown_to_html(self.help_text)
         else:
@@ -276,7 +342,6 @@ class BokehUIGenerator:
         html = html.replace('## ', '<h3>').replace('\n', '</h3>\n', 1)
         html = html.replace('# ', '<h2>').replace('\n', '</h2>\n', 1)
 
-        import re
         html = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', html)
         html = re.sub(r'\*(.+?)\*', r'<i>\1</i>', html)
 

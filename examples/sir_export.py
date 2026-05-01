@@ -22,8 +22,8 @@ class SimpleSIR(pcm.Model):
         g = self.parameter(0.1)
 
         # Flows
-        Fsi = self.flow(lambda: b * S * I / N, src=S, dest=I, stochastic=True)
-        Fir = self.flow(lambda: g * I, src=I, dest=R, stochastic=True)
+        Fsi = self.flow(lambda: b * S * I / N, src=S, dest=I)
+        Fir = self.flow(lambda: g * I, src=I, dest=R)
 
         return locals()
 

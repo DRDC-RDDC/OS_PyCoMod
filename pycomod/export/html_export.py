@@ -9,6 +9,7 @@ PyCoMod model into a self-contained HTML file with:
 * Editable model inputs (pool initial values, parameters)
 * Editable run inputs (duration, time-step, run mode, repetitions)
 * Save / Load buttons for persisting inputs to a JSON text file
+* Interactive plot for single-run simulation results
 """
 
 import base64
@@ -18,6 +19,8 @@ from bokeh.io import output_file, save
 
 from ..model import Model
 from .model_inspector import inspect_model
+from .code_translator import CodeTranslator
+from .js_simulation_engine import generate_js_engine
 from .bokeh_ui_generator import BokehUIGenerator
 from .bokeh_callbacks import attach_callbacks
 
@@ -66,7 +69,28 @@ def export_to_html(
     # Step 1 – Inspect model structure ----------------------------------------
     structure = inspect_model(model)
 
-    # Step 2 – Build Bokeh UI layout ------------------------------------------
+    # Step 2 – Translate lambda functions to JavaScript -----------------------
+    translator = CodeTranslator(structure['element_map'])
+    translated_code = {}
+
+    for name, info in structure.get('equations', {}).items():
+        func_info = info.get('func_info', {})
+        source = func_info.get('source')
+        if source:
+            result = translator.translate_lambda(source)
+            translated_code[name] = result['javascript'] if result['success'] else '0'
+
+    for name, info in structure.get('flows', {}).items():
+        func_info = info.get('rate_func', {})
+        source = func_info.get('source')
+        if source:
+            result = translator.translate_lambda(source)
+            translated_code[name] = result['javascript'] if result['success'] else '0'
+
+    # Step 3 – Generate JavaScript simulation engine --------------------------
+    js_engine = generate_js_engine(structure, translated_code)
+
+    # Step 4 – Build Bokeh UI layout ------------------------------------------
     ui_generator = BokehUIGenerator(
         model_structure=structure,
         title=title,
@@ -75,14 +99,14 @@ def export_to_html(
     )
     layout = ui_generator.generate_layout()
 
-    # Step 3 – Attach JavaScript callbacks (save/load inputs) -----------------
-    attach_callbacks(ui_generator)
+    # Step 5 – Attach JavaScript callbacks ------------------------------------
+    attach_callbacks(ui_generator, js_engine)
 
-    # Step 4 – Write HTML file ------------------------------------------------
+    # Step 6 – Write HTML file ------------------------------------------------
     output_file(str(output_filepath), title=title)
     save(layout)
 
-    # Step 5 – Post-process (inject header + custom CSS) ---------------------
+    # Step 7 – Post-process (inject header + custom CSS) ---------------------
     _post_process_html(str(output_filepath), title=title,
                        banner_image_path=banner_image_path)
 
@@ -128,7 +152,6 @@ def _post_process_html(html_filename: str, title: str = '',
     if "<body>" not in html_content or "</head>" not in html_content:
         return False
 
-    # Inject CSS into <head>
     css = """
     <style>
       html, body { margin: 0; padding: 0; width: 100%; }
@@ -139,7 +162,6 @@ def _post_process_html(html_filename: str, title: str = '',
     </style>"""
     html_content = html_content.replace("</head>", css + "\n  </head>")
 
-    # Inject header as first element in <body>, outside Bokeh's layout
     header_html = _build_header_html(title, banner_image_path)
     html_content = html_content.replace("<body>", "<body>\n" + header_html)
 
