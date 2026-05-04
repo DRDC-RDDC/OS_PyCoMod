@@ -58,7 +58,7 @@ def export_to_html(
 
     # Resolve DRDC banner path ------------------------------------------------
     _pkg_dir = Path(__file__).resolve().parent
-    _default_banner = _pkg_dir.parent.parent / "assets" / "drdc_banner.jpg"
+    _default_banner = _pkg_dir.parent.parent / "assets" / "all_elements_banner.svg"
     banner_image_path = str(_default_banner) if _default_banner.exists() else None
 
     # Resolve output path -----------------------------------------------------
@@ -120,21 +120,26 @@ def _build_header_html(title: str, banner_image_path: str | None) -> str:
             image_data = f.read()
         encoded = base64.b64encode(image_data).decode('utf-8')
         ext = Path(banner_image_path).suffix.lower()
-        mime_type = 'image/jpeg' if ext in ['.jpg', '.jpeg'] else 'image/png'
+        mime_type = 'image/svg+xml' if ext == '.svg' else ('image/jpeg' if ext in ['.jpg', '.jpeg'] else 'image/png')
+        # SVG visible content ends at y≈173.5 of 271.33 total.
+        # Transparent tail = 97.8 SVG units = 97.8/1920 = 5.09% of SVG width.
+        # Negative margin pulls the next section up so it starts at the visible-content edge;
+        # overflow:visible lets the transparent tail stack on top of that section.
         banner_section = (
-            '<div style="flex:1 1 auto; overflow:hidden; line-height:0; min-width:0;">'
+            '<div style="flex:1 1 auto; overflow:visible; line-height:0; min-width:0;">'
             f'<img src="data:{mime_type};base64,{encoded}"'
-            ' style="display:block; width:100%; height:100%; object-fit:cover; object-position:center; margin:0; padding:0;">'
+            ' style="display:block; width:100%; height:auto; pointer-events:none; margin:0; padding:0;">'
             '</div>'
         )
     else:
         banner_section = '<div style="flex:1 1 auto;"></div>'
 
     return (
-        '<div style="display:flex; align-items:stretch; width:100%;'
-        ' background-color:#f0f0f0; border-bottom:2px solid #003366;'
-        ' box-sizing:border-box; margin:0; padding:0;">'
-        '<div style="flex:0 0 auto; padding:4px 15px; display:flex; align-items:center;">'
+        '<div style="display:flex; align-items:flex-start; width:100%;'
+        ' overflow:visible; position:relative; z-index:1;'
+        ' box-sizing:border-box; margin:0 0 -5.09% 0; padding:0;">'
+        '<div style="flex:0 0 auto; padding:4px 15px; display:flex; align-items:center;'
+        ' background-color:#f0f0f0; border-bottom:2px solid #003366;">'
         f'<h1 style="margin:0; padding:0; color:#003366; font-family:Arial,sans-serif;'
         f' white-space:nowrap;">{title}</h1>'
         '</div>'
