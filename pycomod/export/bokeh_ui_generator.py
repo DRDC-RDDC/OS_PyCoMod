@@ -11,7 +11,7 @@ from pathlib import Path
 from bokeh.layouts import column, row
 from bokeh.models import (
     Div, Button, CustomJS, NumericInput, Select, Tabs, TextInput,
-    CheckboxGroup, ColumnDataSource,
+    CheckboxGroup, ColumnDataSource, ScrollBox, ImportedStyleSheet,
 )
 from bokeh.plotting import figure
 
@@ -50,6 +50,9 @@ class BokehUIGenerator:
         self.plot_source: Optional[ColumnDataSource] = None
         self.line_renderers: Dict[str, Any] = {}
         self.output_checkboxes = None
+        
+        css_path = Path(__file__).resolve().parent.parent.parent / "templates" / "css" / "styles.css"
+        self.css = ImportedStyleSheet(url=css_path.as_uri())
 
     def generate_layout(self):
         self._create_model_input_panel()
@@ -62,12 +65,14 @@ class BokehUIGenerator:
         left_panel = column(
             self.tabs,
             self.control_panel,
-            sizing_mode='stretch_width',
+            sizing_mode='stretch_both',
         )
 
+        # This margin makes space for the banner's overhang on the right side
         right_panel = column(
             self.plot_panel,
-            sizing_mode='stretch_both',
+            sizing_mode='stretch_height',
+            margin=(0, 160, 0, 0),
         )
 
         main_content = row(
@@ -84,7 +89,7 @@ class BokehUIGenerator:
         )
 
     def _create_model_input_panel(self):
-        self.model_input_panel = column(sizing_mode='stretch_width')
+        model_input_panel = column(sizing_mode='stretch_width')
 
         if self.model_structure['pools']:
             pools_header = Div(text='<h3>Pools (Initial Values)</h3>')
@@ -103,7 +108,7 @@ class BokehUIGenerator:
                     self.input_widgets[name] = widget
                 pool_widgets.append(widget)
 
-            self.model_input_panel.children.extend([pools_header] + pool_widgets)
+            model_input_panel.children.extend([pools_header] + pool_widgets)
 
         if self.model_structure['parameters']:
             params_header = Div(text='<h3>Parameters</h3>')
@@ -122,10 +127,11 @@ class BokehUIGenerator:
                     self.input_widgets[name] = widget
                 param_widgets.append(widget)
 
-            self.model_input_panel.children.extend([params_header] + param_widgets)
+            model_input_panel.children.extend([params_header] + param_widgets)
+        self.model_input_panel = ScrollBox(child=model_input_panel, vertical_scrollbar='auto', width_policy='max')
 
     def _create_run_input_panel(self):
-        self.run_input_panel = column(sizing_mode='stretch_width')
+        run_input_panel = column(sizing_mode='stretch_both')
 
         run_header = Div(text='<h3>Run Configuration</h3>')
         run_params = self.model_structure['run_params']
@@ -201,7 +207,7 @@ class BokehUIGenerator:
             code='reps_input.disabled = (cb_obj.value !== "Monte Carlo");',
         ))
 
-        self.run_input_panel.children.extend([
+        run_input_panel.children.extend([
             run_header,
             self.date_input,
             self.tunit_select,
@@ -212,6 +218,8 @@ class BokehUIGenerator:
             self.mode_select,
             self.reps_input,
         ])
+        
+        self.run_input_panel = ScrollBox(child=run_input_panel, vertical_scrollbar='auto', width_policy='max')
 
     def _create_control_panel(self):
         self.run_model_button = Button(
@@ -261,6 +269,7 @@ class BokehUIGenerator:
             y_axis_label='Value',
             width=800,
             height=500,
+            sizing_mode='stretch_height',
             tools='pan,wheel_zoom,box_zoom,reset,save',
             active_drag='pan',
             active_scroll='wheel_zoom',
@@ -309,7 +318,7 @@ class BokehUIGenerator:
 
     def _create_message_panel(self):
         message_html = self.template_loader.load_html_template('message_panel.html')
-        self.message_div = Div(text=message_html, sizing_mode='stretch_width')
+        self.message_div = Div(text=message_html, sizing_mode='stretch_width', stylesheets=[self.css])
 
     def _create_tabs(self):
         inputs_tab = _TabPanel(
@@ -327,13 +336,14 @@ class BokehUIGenerator:
         else:
             help_html = self.template_loader.load_html_template('help_content.html')
 
-        help_content = Div(text=help_html, sizing_mode='stretch_width')
+        help_content = Div(text=help_html)
+        help_content = ScrollBox(child=help_content, sizing_mode='stretch_width', width_policy='max')
         help_tab = _TabPanel(
             child=help_content,
             title='Help',
         )
 
-        self.tabs = Tabs(tabs=[inputs_tab, advanced_tab, help_tab])
+        self.tabs = Tabs(tabs=[inputs_tab, advanced_tab, help_tab], sizing_mode='stretch_both')
 
     def _markdown_to_html(self, markdown_text: str) -> str:
         html = markdown_text

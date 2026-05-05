@@ -24,6 +24,15 @@ from .js_simulation_engine import generate_js_engine
 from .bokeh_ui_generator import BokehUIGenerator
 from .bokeh_callbacks import attach_callbacks
 
+_SVG_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "SVG Files"
+
+
+def _load_svg_b64(filename: str) -> str | None:
+    p = _SVG_DIR / filename
+    if not p.exists():
+        return None
+    return base64.b64encode(p.read_bytes()).decode('utf-8')
+
 
 def export_to_html(
     model: Model,
@@ -107,44 +116,43 @@ def export_to_html(
     save(layout)
 
     # Step 7 – Post-process (inject header + custom CSS) ---------------------
-    _post_process_html(str(output_filepath), title=title,
-                       banner_image_path=banner_image_path)
+    _post_process_html(str(output_filepath), title=title)
 
     return str(output_filepath)
 
 
 def _build_header_html(title: str, banner_image_path: str | None) -> str:
-    """Build the header HTML with title and optional banner image."""
-    if banner_image_path and Path(banner_image_path).exists():
-        with open(banner_image_path, 'rb') as f:
-            image_data = f.read()
-        encoded = base64.b64encode(image_data).decode('utf-8')
-        ext = Path(banner_image_path).suffix.lower()
-        mime_type = 'image/svg+xml' if ext == '.svg' else ('image/jpeg' if ext in ['.jpg', '.jpeg'] else 'image/png')
-        # SVG visible content ends at y≈173.5 of 271.33 total.
-        # Transparent tail = 97.8 SVG units = 97.8/1920 = 5.09% of SVG width.
-        # Negative margin pulls the next section up so it starts at the visible-content edge;
-        # overflow:visible lets the transparent tail stack on top of that section.
-        banner_section = (
-            '<div style="flex:1 1 auto; overflow:visible; line-height:0; min-width:0;">'
-            f'<img src="data:{mime_type};base64,{encoded}"'
-            ' style="display:block; width:100%; height:auto; pointer-events:none; margin:0; padding:0;">'
-            '</div>'
-        )
-    else:
-        banner_section = '<div style="flex:1 1 auto;"></div>'
+    """Build the banner header HTML. All styling is handled by the injected stylesheet."""
+    fip_b64   = _load_svg_b64("Defence Identifier (FIP).svg")
+    crest_b64 = _load_svg_b64("Defence Crest.svg")
+    drdc_b64  = _load_svg_b64("DRDC Identifier.svg")
+
+    fip   = f'<img class="bnr-logo bnr-fip" src="data:image/svg+xml;base64,{fip_b64}">'     if fip_b64   else ''
+    crest = f'<img class="bnr-logo bnr-crest" src="data:image/svg+xml;base64,{crest_b64}">' if crest_b64 else ''
+    drdc  = f'<img class="bnr-logo bnr-drdc" src="data:image/svg+xml;base64,{drdc_b64}">'   if drdc_b64  else ''
+    banner_text = "ASSISTANT DEPUTY MINISTER (DEFENCE RESEARCH AND DEVELOPMENT CANADA)"
 
     return (
-        '<div style="display:flex; align-items:flex-start; width:100%;'
-        ' overflow:visible; position:relative; z-index:1;'
-        ' box-sizing:border-box; margin:0 0 -5.09% 0; padding:0;">'
-        '<div style="flex:0 0 auto; padding:4px 15px; display:flex; align-items:center;'
-        ' background-color:#f0f0f0; border-bottom:2px solid #003366;">'
-        f'<h1 style="margin:0; padding:0; color:#003366; font-family:Arial,sans-serif;'
-        f' white-space:nowrap;">{title}</h1>'
-        '</div>'
-        f'{banner_section}'
-        '</div>'
+        f"""
+        <div class="bnr">
+            <!-- The three colour strips -->
+            <div class="bnr-rb bnr-rb-1">
+                {fip}
+            </div>
+            <div class="bnr-rb bnr-rb-2">
+                <div class="bnr-txt">
+                    {banner_text}
+                </div>
+            </div>
+            <div class="bnr-rb bnr-rb-3"></div>
+
+            <!-- Crest/DRDC column, positioned to the right -->
+            <div class="bnr-right-col">
+                {crest}
+                {drdc}
+            </div>
+        </div>
+        """
     )
 
 
@@ -157,14 +165,12 @@ def _post_process_html(html_filename: str, title: str = '',
     if "<body>" not in html_content or "</head>" not in html_content:
         return False
 
-    css = """
-    <style>
-      html, body { margin: 0; padding: 0; width: 100%; }
-      .bk-input-group label { font-size: 15px !important; font-weight: 500; }
-      .bk-input { font-size: 14px !important; }
-      .bk-btn { font-size: 14px !important; }
-      .bk-tabs-header .bk-tab { font-size: 15px !important; }
-    </style>"""
+    css_path = Path(__file__).resolve().parent.parent.parent / "templates" / "css" / "styles.css"
+    with open(css_path, "r", encoding="utf-8") as f:
+        css_rules = f.read()
+    css = f"\n    <style>\n{css_rules}    </style>"
+    # Keep in mind that Bokeh uses Shadow DOMs for its widgets so this won't apply to them.
+    # If you want to style Bokeh widgets, apply the CSS using their "stylesheets" property
     html_content = html_content.replace("</head>", css + "\n  </head>")
 
     header_html = _build_header_html(title, banner_image_path)
