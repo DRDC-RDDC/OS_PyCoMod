@@ -66,12 +66,14 @@ class BokehUIGenerator:
             self.tabs,
             self.control_panel,
             sizing_mode='stretch_both',
+            min_width=320,
+            max_width=450,
         )
 
         # This margin makes space for the banner's overhang on the right side
         right_panel = column(
             self.plot_panel,
-            sizing_mode='stretch_height',
+            sizing_mode='stretch_both',
             margin=(0, 160, 0, 0),
         )
 
@@ -89,7 +91,7 @@ class BokehUIGenerator:
         )
 
     def _create_model_input_panel(self):
-        model_input_panel = column(sizing_mode='stretch_width')
+        model_input_panel = column(sizing_mode='stretch_width', margin=(0,20,0,20))
 
         if self.model_structure['pools']:
             pools_header = Div(text='<h3>Pools (Initial Values)</h3>')
@@ -131,7 +133,7 @@ class BokehUIGenerator:
         self.model_input_panel = ScrollBox(child=model_input_panel, vertical_scrollbar='auto', width_policy='max')
 
     def _create_run_input_panel(self):
-        run_input_panel = column(sizing_mode='stretch_both')
+        run_input_panel = column(sizing_mode='stretch_both', margin=(0,20,0,20))
 
         run_header = Div(text='<h3>Run Configuration</h3>')
         run_params = self.model_structure['run_params']
@@ -269,7 +271,7 @@ class BokehUIGenerator:
             y_axis_label='Value',
             width=800,
             height=500,
-            sizing_mode='stretch_height',
+            sizing_mode='stretch_both',
             tools='pan,wheel_zoom,box_zoom,reset,save',
             active_drag='pan',
             active_scroll='wheel_zoom',

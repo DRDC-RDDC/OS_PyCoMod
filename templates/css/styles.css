@@ -23,7 +23,7 @@ body {
 .bnr {
   position: relative;
   width: 100%;
-  height: clamp(90px, 6vw, 140px);
+  height: clamp(90px, 12vh, 140px);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -42,17 +42,18 @@ body {
   flex: 4;
   background: linear-gradient(to right, #0d0b11, #0f4471 50%, #155286);
   position: relative;
+  display: flex;
 }
 
 .bnr-title {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
   color: #fff;
   font-family: Arial, sans-serif;
-  font-size: clamp(12px, 1.3vw, 20px);
+  font-size: clamp(12px, 2vw, 24px);
   font-weight: 700;
   white-space: nowrap;
+  flex-grow: 1;
+  text-align: center;
+  margin-right: 160px;
 }
 
 .bnr-rb-2 {
