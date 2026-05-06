@@ -23,12 +23,11 @@ body {
 .bnr {
   position: relative;
   width: 100%;
-  height: 171px;
+  height: clamp(90px, 6vw, 140px);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   z-index: 1;
-  pointer-events: none;
 }
 
 .bnr-rb {
@@ -36,6 +35,7 @@ body {
   flex-shrink: 0;
   display: flex;
   align-items: center;
+  min-height: 20px;
 }
 
 .bnr-rb-1 {
@@ -54,7 +54,6 @@ body {
 }
 
 .bnr-fip {
-  height: 100%;
   width: auto;
 }
 
