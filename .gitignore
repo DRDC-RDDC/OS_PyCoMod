@@ -17,3 +17,4 @@ __pycache__/
 test_outputs/
 
 .claude/settings.local.json
+venv
