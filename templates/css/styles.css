@@ -41,6 +41,18 @@ body {
 .bnr-rb-1 {
   flex: 4;
   background: linear-gradient(to right, #0d0b11, #0f4471 50%, #155286);
+  position: relative;
+}
+
+.bnr-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #fff;
+  font-family: Arial, sans-serif;
+  font-size: clamp(12px, 1.3vw, 20px);
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .bnr-rb-2 {

@@ -138,6 +138,9 @@ def _build_header_html(title: str, banner_image_path: str | None) -> str:
             <!-- The three colour strips -->
             <div class="bnr-rb bnr-rb-1">
                 {fip}
+                <div class="bnr-title">
+                    {title}
+                </div>
             </div>
             <div class="bnr-rb bnr-rb-2">
                 <div class="bnr-txt">
