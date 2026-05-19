@@ -21,11 +21,11 @@ class SimpleSIR(pcm.Model):
         b = self.parameter(0.2)
         g = self.parameter(0.1)
 
-        # Flows
-        Fsi = self.flow(lambda: b * S * I / N, src=S, dest=I)
-        Fir = self.flow(lambda: g * I, src=I, dest=R)
+        # Flows (stochastic=True enables gamma-distributed noise for MC runs)
+        Fsi = self.flow(lambda: b * S * I / N, src=S, dest=I, stochastic=True)
+        Fir = self.flow(lambda: g * I, src=I, dest=R, stochastic=True)
 
-        return locals()
+        self.set_available(locals(), output=(S, I, R, N))
 
 
 help_text = """
@@ -38,6 +38,7 @@ This model simulates the spread of an infectious disease in a population.
 - **S (Susceptible)**: Individuals who can contract the disease
 - **I (Infected)**: Individuals currently infected and infectious
 - **R (Recovered)**: Individuals who have recovered and are immune
+- **N (Total)**: Total population (S + I + R); should remain constant
 
 ## Parameters
 

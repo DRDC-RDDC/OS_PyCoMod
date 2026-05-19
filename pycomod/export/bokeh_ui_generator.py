@@ -3,7 +3,6 @@
 Compatible with Bokeh 2.4.1 and Python 3.9.7.
 """
 
-import base64
 import re
 from typing import Dict, Any, Optional, List
 from pathlib import Path
@@ -12,6 +11,7 @@ from bokeh.layouts import column, row
 from bokeh.models import (
     Div, Button, CustomJS, NumericInput, Select, Tabs, TextInput,
     CheckboxGroup, ColumnDataSource, ScrollBox, ImportedStyleSheet,
+    CustomJSTickFormatter, Legend, LegendItem,
 )
 from bokeh.plotting import figure
 
@@ -49,7 +49,10 @@ class BokehUIGenerator:
         self.plot_figure = None
         self.plot_source: Optional[ColumnDataSource] = None
         self.line_renderers: Dict[str, Any] = {}
+        self.mc_band_renderers: Dict[str, Any] = {}
+        self.mc_mean_renderers: Dict[str, Any] = {}
         self.output_checkboxes = None
+        self.xaxis_formatter = None
         
         css_path = Path(__file__).resolve().parent.parent.parent / "templates" / "css" / "styles.css"
         self.css = ImportedStyleSheet(url=css_path.as_uri())
@@ -204,9 +207,19 @@ class BokehUIGenerator:
             disabled=True,
         )
 
+        self.interval_input = NumericInput(
+            title='MC Percentile Interval (%)',
+            value=50,
+            mode='int',
+            low=1,
+            high=99,
+            width=300,
+            disabled=True,
+        )
+
         self.mode_select.js_on_change('value', CustomJS(
-            args={'reps_input': self.reps_input},
-            code='reps_input.disabled = (cb_obj.value !== "Monte Carlo");',
+            args={'reps_input': self.reps_input, 'interval_input': self.interval_input},
+            code='const is_mc = cb_obj.value === "Monte Carlo"; reps_input.disabled = !is_mc; interval_input.disabled = !is_mc;',
         ))
 
         run_input_panel.children.extend([
@@ -219,6 +232,7 @@ class BokehUIGenerator:
             self.yaxis_label_input,
             self.mode_select,
             self.reps_input,
+            self.interval_input,
         ])
         
         self.run_input_panel = ScrollBox(child=run_input_panel, vertical_scrollbar='auto', width_policy='max')
@@ -265,6 +279,8 @@ class BokehUIGenerator:
     def _create_plot_panel(self):
         outputs: List[str] = self.model_structure.get('outputs', [])
 
+        self.xaxis_formatter = CustomJSTickFormatter(code='return String(tick);')
+
         self.plot_figure = figure(
             title='Model Output',
             x_axis_label='Time',
@@ -276,28 +292,68 @@ class BokehUIGenerator:
             active_drag='pan',
             active_scroll='wheel_zoom',
         )
+        self.plot_figure.xaxis[0].formatter = self.xaxis_formatter
 
         initial_data: Dict[str, list] = {'time': []}
         for name in outputs:
             initial_data[name] = []
+            initial_data['%s_mc_median' % name] = []
+            initial_data['%s_mc_p_low' % name] = []
+            initial_data['%s_mc_p_high' % name] = []
 
         self.plot_source = ColumnDataSource(data=initial_data)
 
         for i, name in enumerate(outputs):
+            color = _COLORS[i % len(_COLORS)]
+
+            # Single-run line (visible in Single mode)
             line = self.plot_figure.line(
                 x='time',
                 y=name,
                 source=self.plot_source,
                 line_width=2,
-                line_color=_COLORS[i % len(_COLORS)],
-                legend_label=name,
+                line_color=color,
                 visible=True,
             )
             self.line_renderers[name] = line
 
+            # MC percentile band (visible in Monte Carlo mode)
+            band = self.plot_figure.varea(
+                x='time',
+                y1='%s_mc_p_low' % name,
+                y2='%s_mc_p_high' % name,
+                source=self.plot_source,
+                fill_color=color,
+                fill_alpha=0.33,
+                visible=False,
+            )
+            self.mc_band_renderers[name] = band
+
+            # MC median line (visible in Monte Carlo mode)
+            mc_median = self.plot_figure.line(
+                x='time',
+                y='%s_mc_median' % name,
+                source=self.plot_source,
+                line_width=2,
+                line_color=color,
+                visible=False,
+            )
+            self.mc_mean_renderers[name] = mc_median
+
         if outputs:
-            self.plot_figure.legend.click_policy = 'hide'
-            self.plot_figure.legend.location = 'top_right'
+            # One legend entry per output containing all three of its renderers.
+            # click_policy='mute' dims renderers on click without touching visible,
+            # so it does not conflict with the mode-based visibility management.
+            legend_items = [
+                LegendItem(label=name, renderers=[
+                    self.line_renderers[name],
+                    self.mc_mean_renderers[name],
+                    self.mc_band_renderers[name],
+                ])
+                for name in outputs
+            ]
+            legend = Legend(items=legend_items, location='top_right', click_policy='mute')
+            self.plot_figure.add_layout(legend)
 
             self.output_checkboxes = CheckboxGroup(
                 labels=outputs,

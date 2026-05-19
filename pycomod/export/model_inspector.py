@@ -120,12 +120,23 @@ def _make_flow_entry(name, obj, available):
     func_info = _extract_func_info(obj.rate_func)
     src_name = _find_name(obj.src, available) if obj.src is not None else None
     dest_name = _find_name(obj.dest, available) if obj.dest is not None else None
+
+    variance_value = None
+    variance_func = getattr(obj, 'variance', None)
+    if variance_func is not None:
+        try:
+            variance_value = float(variance_func())
+        except Exception:
+            pass
+
     return {
         'name': name,
         'rate_func': func_info,
         'src': src_name,
         'dest': dest_name,
         'discrete': getattr(obj, 'discrete', False),
+        'stochastic': getattr(obj, 'stochastic', False),
+        'variance_value': variance_value,
     }
 
 

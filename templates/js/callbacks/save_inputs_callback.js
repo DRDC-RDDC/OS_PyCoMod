@@ -10,7 +10,8 @@ try {
         "xaxis": xaxis_select.value,
         "yaxis_label": yaxis_label_input.value,
         "mode": mode_select.value,
-        "reps": reps_input.value
+        "reps": reps_input.value,
+        "interval": interval_input.value
     };
 
     // Convert to JSON

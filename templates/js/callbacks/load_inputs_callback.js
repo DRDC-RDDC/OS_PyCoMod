@@ -23,6 +23,7 @@ try {
                 if (inputs.yaxis_label !== undefined) yaxis_label_input.value = inputs.yaxis_label;
                 if (inputs.mode !== undefined) mode_select.value = inputs.mode;
                 if (inputs.reps !== undefined) reps_input.value = inputs.reps;
+                if (inputs.interval !== undefined) interval_input.value = inputs.interval;
 
                 message_div.text = '<div style="background-color: #d4edda; padding: 10px; border: 1px solid #c3e6cb;"><b>Messages:</b> Inputs loaded successfully</div>';
 

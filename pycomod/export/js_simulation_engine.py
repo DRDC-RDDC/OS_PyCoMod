@@ -65,12 +65,16 @@ class JavaScriptSimulationEngine:
             src = info['src']
             dest = info['dest']
             discrete = info.get('discrete', False)
+            stochastic = info.get('stochastic', False)
+            variance_value = info.get('variance_value', None)
             js_expr = self.translated_code.get(name, '0')
             src_ref = 'elements.%s' % src if src else 'null'
             dest_ref = 'elements.%s' % dest if dest else 'null'
+            variance_js = str(variance_value) if variance_value is not None else 'null'
             flow_init.append(
-                "    elements.%s = new Flow('%s', () => %s, %s, %s, %s);"
-                % (name, name, js_expr, src_ref, dest_ref, str(discrete).lower())
+                "    elements.%s = new Flow('%s', () => %s, %s, %s, %s, %s, %s);"
+                % (name, name, js_expr, src_ref, dest_ref,
+                   str(discrete).lower(), str(stochastic).lower(), variance_js)
             )
 
         return self.template_loader.render_js_template(
