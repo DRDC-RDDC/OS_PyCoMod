@@ -15,6 +15,7 @@ try {
     reps_input.disabled = true;
     interval_input.value = {{DEFAULT_INTERVAL}};
     interval_input.disabled = true;
+    png_resolution_input.value = {{DEFAULT_PNG_RESOLUTION}};
 
     message_div.text = '<div style="background-color: #d4edda; padding: 10px; border: 1px solid #c3e6cb;"><b>Messages:</b> All inputs reset to defaults</div>';
 

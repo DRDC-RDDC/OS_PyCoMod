@@ -222,6 +222,13 @@ class BokehUIGenerator:
             code='const is_mc = cb_obj.value === "Monte Carlo"; reps_input.disabled = !is_mc; interval_input.disabled = !is_mc;',
         ))
 
+        self.png_resolution_input = NumericInput(
+            title='PNG Export Width (px, 1200–1920)',
+            value=1600,
+            mode='int',
+            width=300,
+        )
+
         run_input_panel.children.extend([
             run_header,
             self.date_input,
@@ -233,6 +240,7 @@ class BokehUIGenerator:
             self.mode_select,
             self.reps_input,
             self.interval_input,
+            self.png_resolution_input,
         ])
         
         self.run_input_panel = ScrollBox(child=run_input_panel, vertical_scrollbar='auto', width_policy='max')
@@ -262,17 +270,32 @@ class BokehUIGenerator:
             width=150,
         )
 
+        self.save_csv_button = Button(
+            label='Save as CSV',
+            button_type='primary',
+            width=150,
+        )
+
+        self.save_png_button = Button(
+            label='Save as PNG',
+            button_type='primary',
+            width=150,
+        )
+
         self.control_buttons = {
             'run_model': self.run_model_button,
             'reset': self.reset_button,
             'save_inputs': self.save_inputs_button,
             'load_inputs': self.load_inputs_button,
+            'save_csv': self.save_csv_button,
+            'save_png': self.save_png_button,
         }
 
         self.control_panel = column(
             Div(text='<hr>'),
             row(self.run_model_button, self.reset_button),
             row(self.save_inputs_button, self.load_inputs_button),
+            row(self.save_csv_button, self.save_png_button),
             sizing_mode='stretch_width',
         )
 

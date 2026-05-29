@@ -17,6 +17,8 @@ class BokehCallbackGenerator:
         self._attach_output_toggle_callback()
         self._attach_save_inputs_callback()
         self._attach_load_inputs_callback()
+        self._attach_save_csv_callback()
+        self._attach_save_png_callback()
 
     def _build_common_args(self):
         args = {
@@ -30,6 +32,7 @@ class BokehCallbackGenerator:
             'mode_select': self.ui_generator.mode_select,
             'reps_input': self.ui_generator.reps_input,
             'interval_input': self.ui_generator.interval_input,
+            'png_resolution_input': self.ui_generator.png_resolution_input,
         }
         if self.ui_generator.xaxis_formatter is not None:
             args['xaxis_formatter'] = self.ui_generator.xaxis_formatter
@@ -143,6 +146,7 @@ class BokehCallbackGenerator:
                 'DEFAULT_DT': float(run_params['dt']),
                 'DEFAULT_REPS': int(run_params['reps']),
                 'DEFAULT_INTERVAL': 50,
+                'DEFAULT_PNG_RESOLUTION': 1600,
             }
         )
 
@@ -217,6 +221,30 @@ class BokehCallbackGenerator:
 
         callback = CustomJS(args=args, code=callback_code)
         self.ui_generator.control_buttons['load_inputs'].js_on_click(callback)
+
+    def _attach_save_csv_callback(self):
+        args = self._build_common_args()
+        if self.ui_generator.plot_source is not None:
+            args['plot_source'] = self.ui_generator.plot_source
+
+        outputs = self.model_structure.get('outputs', [])
+        outputs_json = str(outputs).replace("'", '"')
+
+        callback_code = self.template_loader.render_js_callback(
+            'save_csv_callback.js',
+            {'OUTPUTS_JSON': outputs_json}
+        )
+
+        callback = CustomJS(args=args, code=callback_code)
+        self.ui_generator.control_buttons['save_csv'].js_on_click(callback)
+
+    def _attach_save_png_callback(self):
+        args = self._build_common_args()
+
+        callback_code = self.template_loader.render_js_callback('save_png_callback.js')
+
+        callback = CustomJS(args=args, code=callback_code)
+        self.ui_generator.control_buttons['save_png'].js_on_click(callback)
 
 
 def attach_callbacks(ui_generator, js_engine: str = ''):
