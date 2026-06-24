@@ -48,16 +48,36 @@ class JavaScriptSimulationEngine:
             init_val = info['init_value']
             eq_type = info['type']
 
-            if eq_type == 'equation':
+            if eq_type == 'step':
+                default_vals = info['values']
+                default_times = info['times']
+                default_default = info['default']
+                eq_init.append(
+                    "    elements.%s = new Step('%s', "
+                    "_parse_csv(inputs.%s_values, %s), "
+                    "_parse_csv(inputs.%s_times, %s), "
+                    "inputs.%s_default !== undefined ? inputs.%s_default : %s);"
+                    % (name, name,
+                       name, default_vals,
+                       name, default_times,
+                       name, name, default_default)
+                )
+            elif eq_type == 'impulse':
+                default_vals = info['values']
+                default_times = info['times']
+                eq_init.append(
+                    "    elements.%s = new Impulse('%s', "
+                    "_parse_csv(inputs.%s_values, %s), "
+                    "_parse_csv(inputs.%s_times, %s));"
+                    % (name, name,
+                       name, default_vals,
+                       name, default_times)
+                )
+            elif eq_type == 'equation':
                 js_expr = self.translated_code.get(name, '0')
                 eq_init.append(
                     "    elements.%s = new Equation('%s', %s, () => %s);"
                     % (name, name, init_val, js_expr)
-                )
-            else:
-                eq_init.append(
-                    "    elements.%s = new Equation('%s', %s, () => 0);"
-                    % (name, name, init_val)
                 )
 
         flow_init = []

@@ -90,9 +90,54 @@ class Equation extends Element {
         this.eq_func = eq_func;
     }
 
-    update(_dt) {
+    update(_dt, _sim_time) {
         this.value = this.eq_func();
     }
+}
+
+class Step extends Equation {
+    constructor(name, values, times, default_value) {
+        super(name, default_value, () => 0);
+        const len = Math.min(values.length, times.length);
+        this.values = values.slice(0, len);
+        this.times = times.slice(0, len);
+        this.default_value = default_value;
+    }
+
+    update(_dt, sim_time) {
+        let idx = -1;
+        for (let i = 0; i < this.times.length; i++) {
+            if (this.times[i] <= sim_time) idx = i;
+        }
+        this.value = idx < 0 ? this.default_value : this.values[idx];
+    }
+}
+
+class Impulse extends Equation {
+    constructor(name, values, times) {
+        super(name, 0, () => 0);
+        const len = Math.min(values.length, times.length);
+        this.values = values.slice(0, len);
+        this.times = times.slice(0, len);
+    }
+
+    update(dt, sim_time) {
+        let total = 0;
+        for (let i = 0; i < this.times.length; i++) {
+            if (this.times[i] > sim_time - dt && this.times[i] <= sim_time) {
+                total += this.values[i];
+            }
+        }
+        this.value = total > 0 ? total / dt : 0;
+    }
+}
+
+function _parse_csv(str, fallback) {
+    if (str === undefined || str === null) return fallback;
+    const trimmed = String(str).trim();
+    if (trimmed === '') return [];
+    const parts = trimmed.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+    return parts.length > 0 ? parts : fallback;
 }
 
 class Flow extends Element {

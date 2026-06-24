@@ -11,6 +11,11 @@ class BokehCallbackGenerator:
         self.model_structure = ui_generator.model_structure
         self.template_loader = get_loader()
 
+    def _get_all_outputs(self):
+        outputs = self.model_structure.get('outputs', [])
+        si_outputs = self.model_structure.get('si_outputs', [])
+        return outputs + si_outputs
+
     def attach_all_callbacks(self):
         self._attach_run_callback()
         self._attach_reset_callback()
@@ -40,8 +45,7 @@ class BokehCallbackGenerator:
             args['plot_figure'] = self.ui_generator.plot_figure
         for name, widget in self.ui_generator.input_widgets.items():
             args['input_%s' % name] = widget
-        outputs = self.model_structure.get('outputs', [])
-        for name in outputs:
+        for name in self._get_all_outputs():
             if name in self.ui_generator.line_renderers:
                 args['single_line_%s' % name] = self.ui_generator.line_renderers[name]
             if name in self.ui_generator.mc_band_renderers:
@@ -53,25 +57,31 @@ class BokehCallbackGenerator:
     def _attach_run_callback(self):
         args = self._build_common_args()
         args['plot_source'] = self.ui_generator.plot_source
+        if self.ui_generator.output_checkboxes is not None:
+            args['checkboxes'] = self.ui_generator.output_checkboxes
 
-        outputs = self.model_structure.get('outputs', [])
-        outputs_json = str(outputs).replace("'", '"')
+        all_outputs = self._get_all_outputs()
+        outputs_json = str(all_outputs).replace("'", '"')
 
         input_collection = []
         for name in self.ui_generator.input_widgets.keys():
             input_collection.append('        %s: input_%s.value,' % (name, name))
 
-        single_hide = ['        single_line_%s.visible = false;' % n for n in outputs if n in self.ui_generator.line_renderers]
-        single_show = ['        single_line_%s.visible = true;' % n for n in outputs if n in self.ui_generator.line_renderers]
+        single_hide = []
+        single_show = []
         mc_hide = []
         mc_show = []
-        for n in outputs:
+        for i, n in enumerate(all_outputs):
+            chk = 'checkboxes.active.includes(%d)' % i
+            if n in self.ui_generator.line_renderers:
+                single_hide.append('        single_line_%s.visible = false;' % n)
+                single_show.append('        single_line_%s.visible = %s;' % (n, chk))
             if n in self.ui_generator.mc_band_renderers:
                 mc_hide.append('        mc_band_%s.visible = false;' % n)
-                mc_show.append('        mc_band_%s.visible = true;' % n)
+                mc_show.append('        mc_band_%s.visible = %s;' % (n, chk))
             if n in self.ui_generator.mc_mean_renderers:
                 mc_hide.append('        mc_mean_%s.visible = false;' % n)
-                mc_show.append('        mc_mean_%s.visible = true;' % n)
+                mc_show.append('        mc_mean_%s.visible = %s;' % (n, chk))
 
         callback_code = self.template_loader.render_js_callback(
             'run_callback.js',
@@ -100,7 +110,11 @@ class BokehCallbackGenerator:
 
         input_resets = []
         for name, widget in self.ui_generator.input_widgets.items():
-            input_resets.append('    input_%s.value = %s;' % (name, widget.value))
+            val = widget.value
+            if isinstance(val, str):
+                input_resets.append('    input_%s.value = "%s";' % (name, val))
+            else:
+                input_resets.append('    input_%s.value = %s;' % (name, val))
 
         tunit_str = str(run_params.get('tunit', '1 days'))
         tunit_map = {
@@ -115,9 +129,10 @@ class BokehCallbackGenerator:
         if ' ' in date_str:
             date_str = date_str.split(' ')[0]
 
-        outputs = self.model_structure.get('outputs', [])
+        all_outputs = self._get_all_outputs()
+        n_primary = self.ui_generator.n_primary_outputs
         clear_data_lines = ['    const clear_data = { time: [] };']
-        for name in outputs:
+        for name in all_outputs:
             clear_data_lines.append("    clear_data['%s'] = [];" % name)
             clear_data_lines.append("    clear_data['%s_mc_median'] = [];" % name)
             clear_data_lines.append("    clear_data['%s_mc_p_low'] = [];" % name)
@@ -127,10 +142,10 @@ class BokehCallbackGenerator:
         if self.ui_generator.plot_figure is not None:
             clear_data_lines.append('    plot_figure.reset.emit();')
 
-        # Reset renderers to single-mode visibility
-        for name in outputs:
+        for i, name in enumerate(all_outputs):
+            is_si = i >= n_primary
             if name in self.ui_generator.line_renderers:
-                clear_data_lines.append('    single_line_%s.visible = true;' % name)
+                clear_data_lines.append('    single_line_%s.visible = %s;' % (name, 'false' if is_si else 'true'))
             if name in self.ui_generator.mc_band_renderers:
                 clear_data_lines.append('    mc_band_%s.visible = false;' % name)
             if name in self.ui_generator.mc_mean_renderers:
@@ -156,8 +171,8 @@ class BokehCallbackGenerator:
         self.ui_generator.control_buttons['reset'].js_on_click(callback)
 
     def _attach_output_toggle_callback(self):
-        outputs = self.model_structure.get('outputs', [])
-        if not outputs or self.ui_generator.output_checkboxes is None:
+        all_outputs = self._get_all_outputs()
+        if not all_outputs or self.ui_generator.output_checkboxes is None:
             return
 
         args = {
@@ -172,7 +187,7 @@ class BokehCallbackGenerator:
             args['mc_mean_%s' % name] = renderer
 
         toggle_lines = ['    const is_mc = mode_select.value === "Monte Carlo";']
-        for i, name in enumerate(outputs):
+        for i, name in enumerate(all_outputs):
             toggle_lines.append('    const checked_%s = checkboxes.active.includes(%d);' % (name, i))
             if name in self.ui_generator.line_renderers:
                 toggle_lines.append('    single_line_%s.visible = !is_mc && checked_%s;' % (name, name))
@@ -227,8 +242,8 @@ class BokehCallbackGenerator:
         if self.ui_generator.plot_source is not None:
             args['plot_source'] = self.ui_generator.plot_source
 
-        outputs = self.model_structure.get('outputs', [])
-        outputs_json = str(outputs).replace("'", '"')
+        all_outputs = self._get_all_outputs()
+        outputs_json = str(all_outputs).replace("'", '"')
 
         callback_code = self.template_loader.render_js_callback(
             'save_csv_callback.js',

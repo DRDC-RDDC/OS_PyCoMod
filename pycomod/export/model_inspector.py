@@ -64,8 +64,11 @@ def inspect_model(model: Model) -> Dict[str, Any]:
         if name.startswith('_') or name in pools or name in parameters:
             continue
 
-        if isinstance(obj, (Step, Impulse)):
-            equations[name] = _make_equation_entry(name, obj, 'step' if isinstance(obj, Step) else 'impulse')
+        if isinstance(obj, Step):
+            equations[name] = _make_step_entry(name, obj)
+            element_map[name] = 'equation'
+        elif isinstance(obj, Impulse):
+            equations[name] = _make_impulse_entry(name, obj)
             element_map[name] = 'equation'
         elif isinstance(obj, Equation):
             equations[name] = _make_equation_entry(name, obj, 'equation')
@@ -77,12 +80,16 @@ def inspect_model(model: Model) -> Dict[str, Any]:
     # --- Outputs ---
     outputs = list(model.out) if model.out else []
 
+    si_outputs = [name for name, info in equations.items()
+                   if info['type'] in ('step', 'impulse')]
+
     return {
         'pools': pools,
         'parameters': parameters,
         'equations': equations,
         'flows': flows,
         'outputs': outputs,
+        'si_outputs': si_outputs,
         'run_params': run_params,
         'element_map': element_map,
     }
@@ -102,6 +109,51 @@ def _make_entry(name, init_value):
         'type': _get_value_type(init_value),
         'is_vector': is_vec,
         'shape': init_value.shape if is_vec else None,
+    }
+
+
+def _get_closure_vars(func):
+    if func.__closure__ is None:
+        return {}
+    return dict(zip(func.__code__.co_freevars,
+                     [c.cell_contents for c in func.__closure__]))
+
+
+def _resolve_array(val):
+    if isinstance(val, Parameter):
+        val = val()
+    if hasattr(val, 'tolist'):
+        return val.tolist()
+    return [float(v) for v in val]
+
+
+def _make_step_entry(name, obj):
+    cv = _get_closure_vars(obj.eq_func)
+    values = _resolve_array(cv['values'])
+    times = _resolve_array(cv['times'])
+    default = float(cv.get('default', 0))
+    return {
+        'name': name,
+        'type': 'step',
+        'init_value': default,
+        'values': values,
+        'times': times,
+        'default': default,
+        'func_info': _extract_func_info(obj.eq_func),
+    }
+
+
+def _make_impulse_entry(name, obj):
+    cv = _get_closure_vars(obj.eq_func)
+    values = _resolve_array(cv['values'])
+    times = _resolve_array(cv['times'])
+    return {
+        'name': name,
+        'type': 'impulse',
+        'init_value': 0,
+        'values': values,
+        'times': times,
+        'func_info': _extract_func_info(obj.eq_func),
     }
 
 

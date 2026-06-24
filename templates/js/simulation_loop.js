@@ -23,7 +23,7 @@ function run_simulation(inputs, run_params, stochastic_enabled) {
 
         for (const name in elements) {
             if (elements[name] instanceof Equation) {
-                elements[name].update(dt);
+                elements[name].update(dt, sim_time);
             }
         }
 

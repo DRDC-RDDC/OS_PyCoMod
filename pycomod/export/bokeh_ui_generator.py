@@ -133,6 +133,62 @@ class BokehUIGenerator:
                 param_widgets.append(widget)
 
             model_input_panel.children.extend([params_header] + param_widgets)
+
+        equations = self.model_structure.get('equations', {})
+        step_items = {k: v for k, v in equations.items() if v['type'] == 'step'}
+        impulse_items = {k: v for k, v in equations.items() if v['type'] == 'impulse'}
+
+        if step_items:
+            step_header = Div(text='<h3>Step Functions</h3>')
+            step_widgets = []
+            for name, info in step_items.items():
+                values_str = ', '.join(str(v) for v in info['values'])
+                times_str = ', '.join(str(t) for t in info['times'])
+                name_label = Div(text='<b>%s</b>' % name)
+                values_widget = TextInput(
+                    title='Values',
+                    value=values_str,
+                    width=360,
+                )
+                times_widget = TextInput(
+                    title='Times',
+                    value=times_str,
+                    width=360,
+                )
+                default_widget = NumericInput(
+                    title='Default',
+                    value=float(info['default']),
+                    mode='float',
+                    width=360,
+                )
+                self.input_widgets['%s_values' % name] = values_widget
+                self.input_widgets['%s_times' % name] = times_widget
+                self.input_widgets['%s_default' % name] = default_widget
+                step_widgets.extend([name_label, values_widget, times_widget, default_widget])
+            model_input_panel.children.extend([step_header] + step_widgets)
+
+        if impulse_items:
+            impulse_header = Div(text='<h3>Impulse Functions</h3>')
+            impulse_widgets = []
+            for name, info in impulse_items.items():
+                values_str = ', '.join(str(v) for v in info['values'])
+                times_str = ', '.join(str(t) for t in info['times'])
+                name_label = Div(text='<b>%s</b>' % name)
+                values_widget = TextInput(
+                    title='Values',
+                    value=values_str,
+                    width=360,
+                )
+                times_widget = TextInput(
+                    title='Times',
+                    value=times_str,
+                    width=360,
+                )
+                self.input_widgets['%s_values' % name] = values_widget
+                self.input_widgets['%s_times' % name] = times_widget
+                impulse_widgets.extend([name_label, values_widget, times_widget])
+            model_input_panel.children.extend([impulse_header] + impulse_widgets)
+
         self.model_input_panel = ScrollBox(child=model_input_panel, vertical_scrollbar='auto', width_policy='max')
 
     def _create_run_input_panel(self):
@@ -301,6 +357,10 @@ class BokehUIGenerator:
 
     def _create_plot_panel(self):
         outputs: List[str] = self.model_structure.get('outputs', [])
+        si_outputs: List[str] = self.model_structure.get('si_outputs', [])
+        all_outputs = outputs + si_outputs
+        self.all_outputs = all_outputs
+        self.n_primary_outputs = len(outputs)
 
         self.xaxis_formatter = CustomJSTickFormatter(code='return String(tick);')
 
@@ -318,7 +378,7 @@ class BokehUIGenerator:
         self.plot_figure.xaxis[0].formatter = self.xaxis_formatter
 
         initial_data: Dict[str, list] = {'time': []}
-        for name in outputs:
+        for name in all_outputs:
             initial_data[name] = []
             initial_data['%s_mc_median' % name] = []
             initial_data['%s_mc_p_low' % name] = []
@@ -326,21 +386,21 @@ class BokehUIGenerator:
 
         self.plot_source = ColumnDataSource(data=initial_data)
 
-        for i, name in enumerate(outputs):
+        for i, name in enumerate(all_outputs):
             color = _COLORS[i % len(_COLORS)]
+            is_si = i >= len(outputs)
 
-            # Single-run line (visible in Single mode)
             line = self.plot_figure.line(
                 x='time',
                 y=name,
                 source=self.plot_source,
                 line_width=2,
                 line_color=color,
-                visible=True,
+                line_dash='dashed' if is_si else 'solid',
+                visible=not is_si,
             )
             self.line_renderers[name] = line
 
-            # MC percentile band (visible in Monte Carlo mode)
             band = self.plot_figure.varea(
                 x='time',
                 y1='%s_mc_p_low' % name,
@@ -352,34 +412,31 @@ class BokehUIGenerator:
             )
             self.mc_band_renderers[name] = band
 
-            # MC median line (visible in Monte Carlo mode)
             mc_median = self.plot_figure.line(
                 x='time',
                 y='%s_mc_median' % name,
                 source=self.plot_source,
                 line_width=2,
                 line_color=color,
+                line_dash='dashed' if is_si else 'solid',
                 visible=False,
             )
             self.mc_mean_renderers[name] = mc_median
 
-        if outputs:
-            # One legend entry per output containing all three of its renderers.
-            # click_policy='mute' dims renderers on click without touching visible,
-            # so it does not conflict with the mode-based visibility management.
+        if all_outputs:
             legend_items = [
                 LegendItem(label=name, renderers=[
                     self.line_renderers[name],
                     self.mc_mean_renderers[name],
                     self.mc_band_renderers[name],
                 ])
-                for name in outputs
+                for name in all_outputs
             ]
             legend = Legend(items=legend_items, location='top_right', click_policy='mute')
             self.plot_figure.add_layout(legend)
 
             self.output_checkboxes = CheckboxGroup(
-                labels=outputs,
+                labels=all_outputs,
                 active=list(range(len(outputs))),
                 inline=True,
             )
