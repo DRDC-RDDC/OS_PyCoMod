@@ -79,21 +79,26 @@ def export_to_html(
     structure = inspect_model(model)
 
     # Step 2 – Translate lambda functions to JavaScript -----------------------
-    translator = CodeTranslator(structure['element_map'])
+    translator = CodeTranslator(
+        element_map=structure['element_map'],
+        submodel_names=structure['submodel_names'],
+    )
     translated_code = {}
 
     for name, info in structure.get('equations', {}).items():
         func_info = info.get('func_info', {})
         source = func_info.get('source')
         if source:
-            result = translator.translate_lambda(source)
+            prefix = '__'.join(name.split('__')[:-1])
+            result = translator.translate_lambda(source, context_prefix=prefix)
             translated_code[name] = result['javascript'] if result['success'] else '0'
 
     for name, info in structure.get('flows', {}).items():
         func_info = info.get('rate_func', {})
         source = func_info.get('source')
         if source:
-            result = translator.translate_lambda(source)
+            prefix = '__'.join(name.split('__')[:-1])
+            result = translator.translate_lambda(source, context_prefix=prefix)
             translated_code[name] = result['javascript'] if result['success'] else '0'
 
     # Step 3 – Generate JavaScript simulation engine --------------------------

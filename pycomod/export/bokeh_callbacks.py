@@ -83,11 +83,17 @@ class BokehCallbackGenerator:
                 mc_hide.append('        mc_mean_%s.visible = false;' % n)
                 mc_show.append('        mc_mean_%s.visible = %s;' % (n, chk))
 
+        has_stochastic = any(
+            info.get('stochastic', False)
+            for info in self.model_structure.get('flows', {}).values()
+        )
+
         callback_code = self.template_loader.render_js_callback(
             'run_callback.js',
             {
                 'INPUT_COLLECTION': '\n'.join(input_collection),
                 'OUTPUTS_JSON': outputs_json,
+                'HAS_STOCHASTIC': 'true' if has_stochastic else 'false',
                 'SINGLE_HIDE_CODE': '\n'.join(single_hide),
                 'SINGLE_SHOW_CODE': '\n'.join(single_show),
                 'MC_HIDE_CODE': '\n'.join(mc_hide),

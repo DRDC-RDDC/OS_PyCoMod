@@ -31,7 +31,7 @@ class JavaScriptSimulationEngine:
             init_val = info['init_value']
             allow_neg = info.get('allow_negative', False)
             pool_init.append(
-                "    elements.%s = new Pool('%s', inputs.%s !== undefined ? inputs.%s : %s, %s);"
+                "    elements['%s'] = new Pool('%s', inputs['%s'] !== undefined ? inputs['%s'] : %s, %s);"
                 % (name, name, name, name, init_val, str(allow_neg).lower())
             )
 
@@ -39,7 +39,7 @@ class JavaScriptSimulationEngine:
         for name, info in parameters.items():
             init_val = info['init_value']
             param_init.append(
-                "    elements.%s = new Parameter('%s', inputs.%s !== undefined ? inputs.%s : %s);"
+                "    elements['%s'] = new Parameter('%s', inputs['%s'] !== undefined ? inputs['%s'] : %s);"
                 % (name, name, name, name, init_val)
             )
 
@@ -53,10 +53,10 @@ class JavaScriptSimulationEngine:
                 default_times = info['times']
                 default_default = info['default']
                 eq_init.append(
-                    "    elements.%s = new Step('%s', "
-                    "_parse_csv(inputs.%s_values, %s), "
-                    "_parse_csv(inputs.%s_times, %s), "
-                    "inputs.%s_default !== undefined ? inputs.%s_default : %s);"
+                    "    elements['%s'] = new Step('%s', "
+                    "_parse_csv(inputs['%s_values'], %s), "
+                    "_parse_csv(inputs['%s_times'], %s), "
+                    "inputs['%s_default'] !== undefined ? inputs['%s_default'] : %s);"
                     % (name, name,
                        name, default_vals,
                        name, default_times,
@@ -66,9 +66,9 @@ class JavaScriptSimulationEngine:
                 default_vals = info['values']
                 default_times = info['times']
                 eq_init.append(
-                    "    elements.%s = new Impulse('%s', "
-                    "_parse_csv(inputs.%s_values, %s), "
-                    "_parse_csv(inputs.%s_times, %s));"
+                    "    elements['%s'] = new Impulse('%s', "
+                    "_parse_csv(inputs['%s_values'], %s), "
+                    "_parse_csv(inputs['%s_times'], %s));"
                     % (name, name,
                        name, default_vals,
                        name, default_times)
@@ -76,7 +76,7 @@ class JavaScriptSimulationEngine:
             elif eq_type == 'equation':
                 js_expr = self.translated_code.get(name, '0')
                 eq_init.append(
-                    "    elements.%s = new Equation('%s', %s, () => %s);"
+                    "    elements['%s'] = new Equation('%s', %s, () => %s);"
                     % (name, name, init_val, js_expr)
                 )
 
@@ -88,11 +88,11 @@ class JavaScriptSimulationEngine:
             stochastic = info.get('stochastic', False)
             variance_value = info.get('variance_value', None)
             js_expr = self.translated_code.get(name, '0')
-            src_ref = 'elements.%s' % src if src else 'null'
-            dest_ref = 'elements.%s' % dest if dest else 'null'
+            src_ref = "elements['%s']" % src if src else 'null'
+            dest_ref = "elements['%s']" % dest if dest else 'null'
             variance_js = str(variance_value) if variance_value is not None else 'null'
             flow_init.append(
-                "    elements.%s = new Flow('%s', () => %s, %s, %s, %s, %s, %s);"
+                "    elements['%s'] = new Flow('%s', () => %s, %s, %s, %s, %s, %s);"
                 % (name, name, js_expr, src_ref, dest_ref,
                    str(discrete).lower(), str(stochastic).lower(), variance_js)
             )

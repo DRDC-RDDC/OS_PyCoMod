@@ -4,6 +4,7 @@ Compatible with Bokeh 2.4.1 and Python 3.9.7.
 """
 
 import re
+from collections import OrderedDict
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
@@ -29,6 +30,27 @@ _COLORS = [
 ]
 
 
+def _display(name: str, display_names: Dict[str, str]) -> str:
+    return display_names.get(name, name)
+
+
+def _group_by_prefix(items: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Group items by sub-model prefix (everything before the last ``__``).
+
+    Returns an OrderedDict where key ``''`` holds root-level items and
+    other keys hold sub-model groups (e.g. ``r1``, ``r1__inner``).
+    """
+    groups: Dict[str, Dict[str, Any]] = OrderedDict()
+    groups[''] = OrderedDict()
+    for name, info in items.items():
+        if '__' in name:
+            prefix = '__'.join(name.split('__')[:-1])
+            groups.setdefault(prefix, OrderedDict())[name] = info
+        else:
+            groups[''][name] = info
+    return groups
+
+
 class BokehUIGenerator:
     def __init__(self, model_structure: Dict[str, Any],
                  title: str = 'PyCoMod Model',
@@ -39,6 +61,7 @@ class BokehUIGenerator:
         self.help_text = help_text
         self.banner_image_path = banner_image_path
         self.template_loader = get_loader()
+        self.display_names: Dict[str, str] = model_structure.get('display_names', {})
 
         self.input_widgets: Dict[str, Any] = {}
         self.control_buttons: Dict[str, Any] = {}
@@ -53,7 +76,7 @@ class BokehUIGenerator:
         self.mc_mean_renderers: Dict[str, Any] = {}
         self.output_checkboxes = None
         self.xaxis_formatter = None
-        
+
         css_path = Path(__file__).resolve().parent.parent.parent / "templates" / "css" / "styles.css"
         self.css = ImportedStyleSheet(url=css_path.as_uri())
 
@@ -93,106 +116,132 @@ class BokehUIGenerator:
             margin=(0, 0, 0, 0),
         )
 
+    # ------------------------------------------------------------------
+    # Helpers for building grouped widget sections
+    # ------------------------------------------------------------------
+
+    def _build_scalar_widgets(self, items: Dict[str, Any]) -> List:
+        widgets = []
+        for name, info in items.items():
+            if info['is_vector']:
+                widget = Div(text='<b>%s:</b> Vector (shape: %s)' % (_display(name, self.display_names), info['shape']))
+            else:
+                widget = NumericInput(
+                    title=_display(name, self.display_names),
+                    value=float(info['init_value']),
+                    mode='float' if info['type'] == 'float' else 'int',
+                    width=360,
+                )
+                self.input_widgets[name] = widget
+            widgets.append(widget)
+        return widgets
+
+    def _build_step_widgets(self, step_items: Dict[str, Any]) -> List:
+        widgets = []
+        for name, info in step_items.items():
+            values_str = ', '.join(str(v) for v in info['values'])
+            times_str = ', '.join(str(t) for t in info['times'])
+            name_label = Div(text='<b>%s</b>' % _display(name, self.display_names))
+            values_widget = TextInput(title='Values', value=values_str, width=360)
+            times_widget = TextInput(title='Times', value=times_str, width=360)
+            default_widget = NumericInput(title='Default', value=float(info['default']), mode='float', width=360)
+            self.input_widgets['%s_values' % name] = values_widget
+            self.input_widgets['%s_times' % name] = times_widget
+            self.input_widgets['%s_default' % name] = default_widget
+            widgets.extend([name_label, values_widget, times_widget, default_widget])
+        return widgets
+
+    def _build_impulse_widgets(self, impulse_items: Dict[str, Any]) -> List:
+        widgets = []
+        for name, info in impulse_items.items():
+            values_str = ', '.join(str(v) for v in info['values'])
+            times_str = ', '.join(str(t) for t in info['times'])
+            name_label = Div(text='<b>%s</b>' % _display(name, self.display_names))
+            values_widget = TextInput(title='Values', value=values_str, width=360)
+            times_widget = TextInput(title='Times', value=times_str, width=360)
+            self.input_widgets['%s_values' % name] = values_widget
+            self.input_widgets['%s_times' % name] = times_widget
+            widgets.extend([name_label, values_widget, times_widget])
+        return widgets
+
+    # ------------------------------------------------------------------
+    # Panel builders
+    # ------------------------------------------------------------------
+
     def _create_model_input_panel(self):
-        model_input_panel = column(sizing_mode='stretch_width', margin=(0,20,0,20))
+        model_input_panel = column(sizing_mode='stretch_width', margin=(0, 20, 0, 20))
 
-        if self.model_structure['pools']:
-            pools_header = Div(text='<h3>Pools (Initial Values)</h3>')
-            pool_widgets = []
-
-            for name, info in self.model_structure['pools'].items():
-                if info['is_vector']:
-                    widget = Div(text='<b>%s:</b> Vector (shape: %s)' % (name, info['shape']))
-                else:
-                    widget = NumericInput(
-                        title=name,
-                        value=float(info['init_value']),
-                        mode='float' if info['type'] == 'float' else 'int',
-                        width=360,
-                    )
-                    self.input_widgets[name] = widget
-                pool_widgets.append(widget)
-
-            model_input_panel.children.extend([pools_header] + pool_widgets)
-
-        if self.model_structure['parameters']:
-            params_header = Div(text='<h3>Parameters</h3>')
-            param_widgets = []
-
-            for name, info in self.model_structure['parameters'].items():
-                if info['is_vector']:
-                    widget = Div(text='<b>%s:</b> Vector (shape: %s)' % (name, info['shape']))
-                else:
-                    widget = NumericInput(
-                        title=name,
-                        value=float(info['init_value']),
-                        mode='float' if info['type'] == 'float' else 'int',
-                        width=360,
-                    )
-                    self.input_widgets[name] = widget
-                param_widgets.append(widget)
-
-            model_input_panel.children.extend([params_header] + param_widgets)
+        pool_groups = _group_by_prefix(self.model_structure['pools'])
+        param_groups = _group_by_prefix(self.model_structure['parameters'])
 
         equations = self.model_structure.get('equations', {})
         step_items = {k: v for k, v in equations.items() if v['type'] == 'step'}
         impulse_items = {k: v for k, v in equations.items() if v['type'] == 'impulse'}
+        step_groups = _group_by_prefix(step_items)
+        impulse_groups = _group_by_prefix(impulse_items)
 
-        if step_items:
-            step_header = Div(text='<h3>Step Functions</h3>')
-            step_widgets = []
-            for name, info in step_items.items():
-                values_str = ', '.join(str(v) for v in info['values'])
-                times_str = ', '.join(str(t) for t in info['times'])
-                name_label = Div(text='<b>%s</b>' % name)
-                values_widget = TextInput(
-                    title='Values',
-                    value=values_str,
-                    width=360,
-                )
-                times_widget = TextInput(
-                    title='Times',
-                    value=times_str,
-                    width=360,
-                )
-                default_widget = NumericInput(
-                    title='Default',
-                    value=float(info['default']),
-                    mode='float',
-                    width=360,
-                )
-                self.input_widgets['%s_values' % name] = values_widget
-                self.input_widgets['%s_times' % name] = times_widget
-                self.input_widgets['%s_default' % name] = default_widget
-                step_widgets.extend([name_label, values_widget, times_widget, default_widget])
-            model_input_panel.children.extend([step_header] + step_widgets)
+        # --- Root-level elements ---
+        root_pools = pool_groups.get('', {})
+        if root_pools:
+            model_input_panel.children.append(Div(text='<h3>Pools (Initial Values)</h3>'))
+            model_input_panel.children.extend(self._build_scalar_widgets(root_pools))
 
-        if impulse_items:
-            impulse_header = Div(text='<h3>Impulse Functions</h3>')
-            impulse_widgets = []
-            for name, info in impulse_items.items():
-                values_str = ', '.join(str(v) for v in info['values'])
-                times_str = ', '.join(str(t) for t in info['times'])
-                name_label = Div(text='<b>%s</b>' % name)
-                values_widget = TextInput(
-                    title='Values',
-                    value=values_str,
-                    width=360,
-                )
-                times_widget = TextInput(
-                    title='Times',
-                    value=times_str,
-                    width=360,
-                )
-                self.input_widgets['%s_values' % name] = values_widget
-                self.input_widgets['%s_times' % name] = times_widget
-                impulse_widgets.extend([name_label, values_widget, times_widget])
-            model_input_panel.children.extend([impulse_header] + impulse_widgets)
+        root_params = param_groups.get('', {})
+        if root_params:
+            model_input_panel.children.append(Div(text='<h3>Parameters</h3>'))
+            model_input_panel.children.extend(self._build_scalar_widgets(root_params))
+
+        root_steps = step_groups.get('', {})
+        if root_steps:
+            model_input_panel.children.append(Div(text='<h3>Step Functions</h3>'))
+            model_input_panel.children.extend(self._build_step_widgets(root_steps))
+
+        root_impulses = impulse_groups.get('', {})
+        if root_impulses:
+            model_input_panel.children.append(Div(text='<h3>Impulse Functions</h3>'))
+            model_input_panel.children.extend(self._build_impulse_widgets(root_impulses))
+
+        # --- Sub-model elements ---
+        all_prefixes = sorted(set(
+            list(pool_groups.keys()) +
+            list(param_groups.keys()) +
+            list(step_groups.keys()) +
+            list(impulse_groups.keys())
+        ))
+        for prefix in all_prefixes:
+            if prefix == '':
+                continue
+            display_prefix = prefix.replace('__', '.')
+
+            sm_pools = pool_groups.get(prefix, {})
+            sm_params = param_groups.get(prefix, {})
+            sm_steps = step_groups.get(prefix, {})
+            sm_impulses = impulse_groups.get(prefix, {})
+
+            if not (sm_pools or sm_params or sm_steps or sm_impulses):
+                continue
+
+            model_input_panel.children.append(
+                Div(text='<h3 style="border-top: 1px solid #ccc; padding-top: 10px;">Sub-model: %s</h3>' % display_prefix)
+            )
+
+            if sm_pools:
+                model_input_panel.children.append(Div(text='<h4>Pools</h4>'))
+                model_input_panel.children.extend(self._build_scalar_widgets(sm_pools))
+            if sm_params:
+                model_input_panel.children.append(Div(text='<h4>Parameters</h4>'))
+                model_input_panel.children.extend(self._build_scalar_widgets(sm_params))
+            if sm_steps:
+                model_input_panel.children.append(Div(text='<h4>Step Functions</h4>'))
+                model_input_panel.children.extend(self._build_step_widgets(sm_steps))
+            if sm_impulses:
+                model_input_panel.children.append(Div(text='<h4>Impulse Functions</h4>'))
+                model_input_panel.children.extend(self._build_impulse_widgets(sm_impulses))
 
         self.model_input_panel = ScrollBox(child=model_input_panel, vertical_scrollbar='auto', width_policy='max')
 
     def _create_run_input_panel(self):
-        run_input_panel = column(sizing_mode='stretch_both', margin=(0,20,0,20))
+        run_input_panel = column(sizing_mode='stretch_both', margin=(0, 20, 0, 20))
 
         run_header = Div(text='<h3>Run Configuration</h3>')
         run_params = self.model_structure['run_params']
@@ -279,7 +328,7 @@ class BokehUIGenerator:
         ))
 
         self.png_resolution_input = NumericInput(
-            title='PNG Export Width (px, 1200–1920)',
+            title='PNG Export Width (px, 1200-1920)',
             value=1600,
             mode='int',
             width=300,
@@ -298,7 +347,7 @@ class BokehUIGenerator:
             self.interval_input,
             self.png_resolution_input,
         ])
-        
+
         self.run_input_panel = ScrollBox(child=run_input_panel, vertical_scrollbar='auto', width_policy='max')
 
     def _create_control_panel(self):
@@ -425,7 +474,7 @@ class BokehUIGenerator:
 
         if all_outputs:
             legend_items = [
-                LegendItem(label=name, renderers=[
+                LegendItem(label=_display(name, self.display_names), renderers=[
                     self.line_renderers[name],
                     self.mc_mean_renderers[name],
                     self.mc_band_renderers[name],
@@ -435,8 +484,9 @@ class BokehUIGenerator:
             legend = Legend(items=legend_items, location='top_right', click_policy='mute')
             self.plot_figure.add_layout(legend)
 
+            display_labels = [_display(name, self.display_names) for name in all_outputs]
             self.output_checkboxes = CheckboxGroup(
-                labels=all_outputs,
+                labels=display_labels,
                 active=list(range(len(outputs))),
                 inline=True,
             )

@@ -1,25 +1,29 @@
-"""Model inspection utilities using _get_init_df().
+"""Model inspection utilities with sub-model support.
 
 Compatible with Bokeh 2.4.1 and Python 3.9.7.
 """
 
 import inspect
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set, List
 import numpy as np
 
-from ..elements import Pool, Parameter, Equation, Flow, Step, Impulse
+from ..elements import Pool, Parameter, Equation, Flow, Step, Impulse, VirtualBuildingBlock
 from ..model import Model
 
 
 def inspect_model(model: Model) -> Dict[str, Any]:
-    """Extract model structure including equations, flows, and outputs.
+    """Extract model structure including sub-models, flattened into a single namespace.
+
+    Sub-model elements are prefixed with the sub-model variable name(s)
+    separated by ``__``.  For example, sub-model ``m``'s pool ``P`` becomes
+    ``m__P``; nested ``m1.m2.P`` becomes ``m1__m2__P``.
 
     Returns a dict with keys: pools, parameters, equations, flows,
-    outputs, run_params, element_map.
+    outputs, si_outputs, run_params, element_map, submodel_names,
+    display_names.
     """
     init_data = model._get_init_df()
 
-    # --- Run parameters from the 'run' DataFrame ---
     run_df = init_data['run']
     run_params = {
         't': _safe_scalar(run_df['t'].iloc[0]),
@@ -30,58 +34,25 @@ def inspect_model(model: Model) -> Dict[str, Any]:
         'reps': int(run_df['reps'].iloc[0]),
     }
 
-    # --- Model inputs from the 'model' DataFrame ---
-    available = getattr(model, '_available', {})
+    identity_map = _build_identity_map(model, '')
 
-    pools = {}
-    parameters = {}
-    equations = {}
-    flows = {}
-    element_map = {}
+    pools: Dict[str, Any] = {}
+    parameters: Dict[str, Any] = {}
+    equations: Dict[str, Any] = {}
+    flows: Dict[str, Any] = {}
+    element_map: Dict[str, str] = {}
+    submodel_names: Set[str] = set()
+    display_names: Dict[str, str] = {}
 
-    model_df = init_data.get('model')
-    if model_df is not None:
-        for col in model_df.columns:
-            if col == 'out':
-                continue
+    _collect_elements_recursive(
+        model, '', identity_map,
+        pools, parameters, equations, flows,
+        element_map, submodel_names, display_names,
+    )
 
-            obj = available.get(col)
-            if obj is None:
-                continue
-
-            values = model_df[col].dropna().tolist()
-            init_value = values[0] if values else 0
-
-            if isinstance(obj, Pool):
-                pools[col] = _make_pool_entry(col, init_value, obj)
-                element_map[col] = 'pool'
-            elif isinstance(obj, Parameter):
-                parameters[col] = _make_entry(col, init_value)
-                element_map[col] = 'parameter'
-
-    # --- Extract equations and flows from _available ---
-    for name, obj in available.items():
-        if name.startswith('_') or name in pools or name in parameters:
-            continue
-
-        if isinstance(obj, Step):
-            equations[name] = _make_step_entry(name, obj)
-            element_map[name] = 'equation'
-        elif isinstance(obj, Impulse):
-            equations[name] = _make_impulse_entry(name, obj)
-            element_map[name] = 'equation'
-        elif isinstance(obj, Equation):
-            equations[name] = _make_equation_entry(name, obj, 'equation')
-            element_map[name] = 'equation'
-        elif isinstance(obj, Flow):
-            flows[name] = _make_flow_entry(name, obj, available)
-            element_map[name] = 'flow'
-
-    # --- Outputs ---
-    outputs = list(model.out) if model.out else []
-
+    outputs = _flatten_outputs(model, '')
     si_outputs = [name for name, info in equations.items()
-                   if info['type'] in ('step', 'impulse')]
+                  if info['type'] in ('step', 'impulse')]
 
     return {
         'pools': pools,
@@ -92,8 +63,143 @@ def inspect_model(model: Model) -> Dict[str, Any]:
         'si_outputs': si_outputs,
         'run_params': run_params,
         'element_map': element_map,
+        'submodel_names': submodel_names,
+        'display_names': display_names,
     }
 
+
+# ---------------------------------------------------------------------------
+# Identity map: id(obj) -> qualified flat name
+# ---------------------------------------------------------------------------
+
+def _build_identity_map(model: Model, prefix: str) -> Dict[int, str]:
+    """Recursively map ``id(obj)`` to qualified flat name for every element."""
+    result: Dict[int, str] = {}
+    available = getattr(model, '_available', {})
+
+    for name, obj in available.items():
+        if name.startswith('_'):
+            continue
+        flat = (prefix + '__' + name) if prefix else name
+
+        if isinstance(obj, Model):
+            result.update(_build_identity_map(obj, flat))
+        elif isinstance(obj, VirtualBuildingBlock):
+            target = getattr(obj, '_target', None)
+            if target is not None:
+                result[id(target)] = flat
+            result[id(obj)] = flat
+        elif hasattr(obj, 'value'):
+            result[id(obj)] = flat
+
+    return result
+
+
+def _find_name_by_identity(element, identity_map: Dict[int, str]) -> Optional[str]:
+    if element is None:
+        return None
+    if isinstance(element, VirtualBuildingBlock):
+        target = getattr(element, '_target', None)
+        if target is not None:
+            name = identity_map.get(id(target))
+            if name is not None:
+                return name
+    return identity_map.get(id(element))
+
+
+# ---------------------------------------------------------------------------
+# Recursive element collection
+# ---------------------------------------------------------------------------
+
+def _collect_elements_recursive(
+    model: Model,
+    prefix: str,
+    identity_map: Dict[int, str],
+    pools: Dict[str, Any],
+    parameters: Dict[str, Any],
+    equations: Dict[str, Any],
+    flows: Dict[str, Any],
+    element_map: Dict[str, str],
+    submodel_names: Set[str],
+    display_names: Dict[str, str],
+):
+    available = getattr(model, '_available', {})
+
+    for name, obj in available.items():
+        if name.startswith('_'):
+            continue
+
+        flat = (prefix + '__' + name) if prefix else name
+        dotted = flat.replace('__', '.')
+
+        if isinstance(obj, Model):
+            submodel_names.add(name)
+            _collect_elements_recursive(
+                obj, flat, identity_map,
+                pools, parameters, equations, flows,
+                element_map, submodel_names, display_names,
+            )
+
+        elif isinstance(obj, Pool):
+            pools[flat] = _make_pool_entry(flat, obj(), obj)
+            element_map[flat] = 'pool'
+            if flat != dotted:
+                display_names[flat] = dotted
+
+        elif isinstance(obj, Parameter):
+            parameters[flat] = _make_entry(flat, obj())
+            element_map[flat] = 'parameter'
+            if flat != dotted:
+                display_names[flat] = dotted
+
+        elif isinstance(obj, Step):
+            equations[flat] = _make_step_entry(flat, obj)
+            element_map[flat] = 'equation'
+            if flat != dotted:
+                display_names[flat] = dotted
+
+        elif isinstance(obj, Impulse):
+            equations[flat] = _make_impulse_entry(flat, obj)
+            element_map[flat] = 'equation'
+            if flat != dotted:
+                display_names[flat] = dotted
+
+        elif isinstance(obj, Equation):
+            equations[flat] = _make_equation_entry(flat, obj, 'equation')
+            element_map[flat] = 'equation'
+            if flat != dotted:
+                display_names[flat] = dotted
+
+        elif isinstance(obj, Flow):
+            flows[flat] = _make_flow_entry(flat, obj, identity_map)
+            element_map[flat] = 'flow'
+            if flat != dotted:
+                display_names[flat] = dotted
+
+
+# ---------------------------------------------------------------------------
+# Output flattening
+# ---------------------------------------------------------------------------
+
+def _flatten_outputs(model: Model, prefix: str) -> List[str]:
+    """Expand sub-model entries in the output list into flat element names."""
+    available = getattr(model, '_available', {})
+    result: List[str] = []
+
+    for name in (model.out or []):
+        flat = (prefix + '__' + name) if prefix else name
+        obj = available.get(name)
+        if isinstance(obj, Model):
+            result.extend(_flatten_outputs(obj, flat))
+        else:
+            result.append(flat)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Entry builders (unchanged signatures)
+# ---------------------------------------------------------------------------
 
 def _make_pool_entry(name, init_value, obj):
     entry = _make_entry(name, init_value)
@@ -168,10 +274,10 @@ def _make_equation_entry(name, obj, eq_type):
     }
 
 
-def _make_flow_entry(name, obj, available):
+def _make_flow_entry(name, obj, identity_map):
     func_info = _extract_func_info(obj.rate_func)
-    src_name = _find_name(obj.src, available) if obj.src is not None else None
-    dest_name = _find_name(obj.dest, available) if obj.dest is not None else None
+    src_name = _find_name_by_identity(obj.src, identity_map)
+    dest_name = _find_name_by_identity(obj.dest, identity_map)
 
     variance_value = None
     variance_func = getattr(obj, 'variance', None)
@@ -202,13 +308,6 @@ def _extract_func_info(func) -> Dict[str, Any]:
         'source': source,
         'is_lambda': getattr(func, '__name__', '') == '<lambda>',
     }
-
-
-def _find_name(element, available) -> Optional[str]:
-    for name, obj in available.items():
-        if obj is element and not name.startswith('_'):
-            return name
-    return None
 
 
 def _get_value_type(value):

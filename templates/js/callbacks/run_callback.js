@@ -21,6 +21,8 @@ try {
 
     const start_time = performance.now();
 
+    const has_stochastic = {{HAS_STOCHASTIC}};
+
     if (mode === 'Monte Carlo') {
         const result = window.PyCoModSimulation.run_simulation_mc(inputs, run_params);
         const elapsed = (performance.now() - start_time).toFixed(1);
@@ -42,7 +44,11 @@ try {
 {{MC_SHOW_CODE}}
 
         plot_source.data = plot_data;
-        message_div.text = `<div style="background-color: #d4edda; padding: 10px; border: 1px solid #c3e6cb;"><b>Messages:</b> Monte Carlo (${run_params.reps} runs, ${run_params.interval}% interval) completed in ${elapsed} ms</div>`;
+        if (!has_stochastic) {
+            message_div.text = `<div style="background-color: #fff3cd; padding: 10px; border: 1px solid #ffc107;"><b>Warning:</b> Monte Carlo completed (${run_params.reps} runs, ${elapsed} ms) but no stochastic flows are defined — all replications produced identical results. Set stochastic=True on one or more flows to enable variability.</div>`;
+        } else {
+            message_div.text = `<div style="background-color: #d4edda; padding: 10px; border: 1px solid #c3e6cb;"><b>Messages:</b> Monte Carlo (${run_params.reps} runs, ${run_params.interval}% interval) completed in ${elapsed} ms</div>`;
+        }
 
     } else {
         const result = window.PyCoModSimulation.run_simulation(inputs, run_params);
