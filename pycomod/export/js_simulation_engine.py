@@ -97,6 +97,8 @@ class JavaScriptSimulationEngine:
                    str(discrete).lower(), str(stochastic).lower(), variance_js)
             )
 
+        process_init = self._generate_process_initialization()
+
         return self.template_loader.render_js_template(
             'element_initialization.js',
             {
@@ -104,8 +106,50 @@ class JavaScriptSimulationEngine:
                 'PARAMETER_INITIALIZATION': '\n'.join(param_init),
                 'EQUATION_INITIALIZATION': '\n'.join(eq_init),
                 'FLOW_INITIALIZATION': '\n'.join(flow_init),
+                'PROCESS_INITIALIZATION': '\n'.join(process_init),
             }
         )
+
+
+    def _generate_process_initialization(self):
+        processes = self.model_structure.get('processes', {})
+        lines = []
+        for name, info in processes.items():
+            start_js = 'null'
+            start_type = info.get('start_type')
+            start_value = info.get('start_value')
+            if start_type == 'delay':
+                start_js = 'new Delay(%s)' % start_value
+            elif start_type == 'time':
+                start_js = 'new Time(%s)' % start_value
+            elif start_type == 'timestep':
+                start_js = 'new Delay(%s * sim_context.dt)' % start_value
+
+            js_body = info.get('js_body')
+            if not js_body:
+                continue
+            priority = info.get('priority', 0)
+
+            # Re-indent the multi-line function body to align under the assignment
+            js_lines = js_body.splitlines()
+            if len(js_lines) > 1:
+                indented = js_lines[0]
+                for jl in js_lines[1:]:
+                    indented += '\n    ' + jl
+                js_body = indented
+
+            lines.append(
+                "    const %s_routine = %s;" % (name, js_body)
+            )
+            lines.append(
+                "    const %s = new Process(%s_routine, "
+                "{ start: %s, priority: %s, parent: sim_context });"
+                % (name, name, start_js, priority)
+            )
+            lines.append("    processes.push(%s);" % name)
+            lines.append("")
+
+        return lines
 
 
 def generate_js_engine(model_structure: Dict[str, Any],

@@ -7,7 +7,7 @@ import inspect
 from typing import Dict, Any, Optional, Set, List
 import numpy as np
 
-from ..elements import Pool, Parameter, Equation, Flow, Step, Impulse, VirtualBuildingBlock
+from ..elements import Pool, Parameter, Equation, Flow, Step, Impulse, VirtualBuildingBlock, Process, Delay, Time, TimeStep, Date
 from ..model import Model
 
 
@@ -54,11 +54,14 @@ def inspect_model(model: Model) -> Dict[str, Any]:
     si_outputs = [name for name, info in equations.items()
                   if info['type'] in ('step', 'impulse')]
 
+    processes = _collect_processes(model, '')
+
     return {
         'pools': pools,
         'parameters': parameters,
         'equations': equations,
         'flows': flows,
+        'processes': processes,
         'outputs': outputs,
         'si_outputs': si_outputs,
         'run_params': run_params,
@@ -329,3 +332,57 @@ def _safe_scalar(val):
     elif isinstance(val, (np.floating,)):
         return float(val)
     return val
+
+
+# ---------------------------------------------------------------------------
+# Process collection
+# ---------------------------------------------------------------------------
+
+def _collect_processes(model: Model, prefix: str) -> Dict[str, Any]:
+    """Extract process definitions from a model and its sub-models."""
+    processes: Dict[str, Any] = {}
+
+    for i, proc in enumerate(getattr(model, '_processes', [])):
+        name = getattr(proc.routine, '__name__', 'proc_%d' % i)
+        flat = (prefix + '__' + name) if prefix else name
+
+        start_type = None
+        start_value = None
+        if proc.start is not None:
+            if isinstance(proc.start, Time):
+                start_type = 'time'
+                start_value = proc.start.time
+            elif isinstance(proc.start, Delay):
+                start_type = 'delay'
+                start_value = proc.start.delay
+            elif isinstance(proc.start, TimeStep):
+                start_type = 'timestep'
+                start_value = proc.start.steps
+
+        source = None
+        try:
+            source = inspect.getsource(proc.routine).strip()
+        except (OSError, TypeError):
+            pass
+
+        processes[flat] = {
+            'name': flat,
+            'start_type': start_type,
+            'start_value': _safe_scalar(start_value) if start_value is not None else None,
+            'priority': proc.priority,
+            'source': source,
+        }
+
+    for sub_name, sub_model in _iter_submodels(model):
+        sub_prefix = (prefix + '__' + sub_name) if prefix else sub_name
+        processes.update(_collect_processes(sub_model, sub_prefix))
+
+    return processes
+
+
+def _iter_submodels(model: Model):
+    """Yield (name, sub_model) pairs from a model's _available dict."""
+    available = getattr(model, '_available', {})
+    for name, obj in available.items():
+        if isinstance(obj, Model):
+            yield name, obj

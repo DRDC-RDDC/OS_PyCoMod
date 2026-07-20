@@ -15,11 +15,35 @@ function run_simulation(inputs, run_params, stochastic_enabled) {
     const dt = run_params.dt || 1;
     const n_steps = Math.floor((t_end - t_start) / dt);
 
+    // --- Event queue setup ---
+    const event_queue = new MinHeap();
+    const sim_context = {
+        sim_time: t_start,
+        dt: dt,
+        event_queue: event_queue,
+        elements: elements,
+    };
+
+    const processes = initialize_processes(sim_context);
+    for (const proc of processes) {
+        proc.reset();
+    }
+
     let sim_time = t_start;
     const time_hist = [t_start];
 
     for (let step = 0; step < n_steps; step++) {
-        sim_time += dt;
+        const t_next = sim_time + dt;
+
+        // Process events due before or at t_next (mirrors Python _update_events)
+        while (event_queue.length > 0 && event_queue.peek().time <= t_next) {
+            const ev = event_queue.pop();
+            sim_context.sim_time = ev.time;
+            ev.run();
+        }
+
+        sim_time = t_next;
+        sim_context.sim_time = sim_time;
 
         for (const name in elements) {
             if (elements[name] instanceof Equation) {

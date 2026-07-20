@@ -181,3 +181,221 @@ class Flow extends Element {
         this.value = rate;
     }
 }
+
+// ============================================================================
+// Process / Event System
+// ============================================================================
+
+// --- Min-heap (JS has no built-in heapq) ---
+
+class MinHeap {
+    constructor() {
+        this._data = [];
+    }
+
+    get length() {
+        return this._data.length;
+    }
+
+    peek() {
+        return this._data[0];
+    }
+
+    push(item) {
+        this._data.push(item);
+        this._bubbleUp(this._data.length - 1);
+    }
+
+    pop() {
+        const top = this._data[0];
+        const last = this._data.pop();
+        if (this._data.length > 0) {
+            this._data[0] = last;
+            this._sinkDown(0);
+        }
+        return top;
+    }
+
+    _bubbleUp(i) {
+        while (i > 0) {
+            const parent = (i - 1) >> 1;
+            if (this._cmp(this._data[i], this._data[parent]) < 0) {
+                [this._data[i], this._data[parent]] = [this._data[parent], this._data[i]];
+                i = parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    _sinkDown(i) {
+        const n = this._data.length;
+        while (true) {
+            let smallest = i;
+            const left = 2 * i + 1;
+            const right = 2 * i + 2;
+            if (left < n && this._cmp(this._data[left], this._data[smallest]) < 0) smallest = left;
+            if (right < n && this._cmp(this._data[right], this._data[smallest]) < 0) smallest = right;
+            if (smallest !== i) {
+                [this._data[i], this._data[smallest]] = [this._data[smallest], this._data[i]];
+                i = smallest;
+            } else {
+                break;
+            }
+        }
+    }
+
+    _cmp(a, b) {
+        if (a.time !== b.time) return a.time - b.time;
+        return b.priority - a.priority;
+    }
+}
+
+// --- Delay / Time marker objects (what yield returns) ---
+
+class Delay {
+    constructor(delay) {
+        this.delay = delay;
+    }
+}
+
+class Time {
+    constructor(time) {
+        this.time = time;
+    }
+}
+
+// --- Event: wraps a generator and manages its lifecycle on the heap ---
+
+class SimEvent {
+    constructor(routine, { time = null, args = [], priority = 0, origin = null, parent = null } = {}) {
+        this.routine = routine;
+        this.time = time;
+        this.args = args;
+        this.priority = priority;
+        this.origin = origin;
+        this.parent = parent;
+        this.finished = false;
+        this._generator = null;
+    }
+
+    _yieldReturn(y) {
+        if (y instanceof Delay) {
+            this.time = this.parent.sim_time + y.delay;
+            this.parent.event_queue.push(this);
+        } else if (y instanceof Time) {
+            this.time = y.time;
+            this.parent.event_queue.push(this);
+        } else if (y instanceof SimEvent) {
+            y.time = this.parent.sim_time;
+            y.origin = this;
+            y.run();
+        }
+    }
+
+    resume(value) {
+        if (this.finished) return;
+        try {
+            const { value: y, done } = this._generator.next(value);
+            if (done) {
+                this.finished = true;
+                if (this.origin) this.origin.resume(y);
+            } else {
+                this._yieldReturn(y);
+            }
+        } catch (e) {
+            this.finished = true;
+            console.error('Process error:', e);
+        }
+    }
+
+    run() {
+        if (this.finished) return;
+
+        if (this._generator) {
+            this.resume(undefined);
+            return;
+        }
+
+        const result = this.routine(...this.args);
+
+        if (result && typeof result.next === 'function') {
+            this._generator = result;
+            try {
+                const { value: y, done } = this._generator.next();
+                if (done) {
+                    this.finished = true;
+                    if (this.origin) this.origin.resume(y);
+                } else {
+                    this._yieldReturn(y);
+                }
+            } catch (e) {
+                this.finished = true;
+                console.error('Process error:', e);
+            }
+        } else {
+            this.finished = true;
+            if (this.origin) this.origin.resume(result);
+        }
+    }
+
+    start(startMarker) {
+        if (startMarker) {
+            if (startMarker instanceof Delay) {
+                this.time = this.parent.sim_time + startMarker.delay;
+                this.parent.event_queue.push(this);
+            } else if (startMarker instanceof Time) {
+                this.time = startMarker.time;
+                this.parent.event_queue.push(this);
+            }
+        } else {
+            this.run();
+        }
+    }
+}
+
+// --- Process: template for creating events (mirrors Python Process) ---
+
+class Process {
+    constructor(routine, { start = null, priority = 0, parent = null } = {}) {
+        this.routine = routine;
+        this._start = start;
+        this.priority = priority;
+        this.parent = parent;
+    }
+
+    reset() {
+        if (this._start) {
+            const ev = new SimEvent(this.routine, {
+                time: 0,
+                priority: this.priority,
+                parent: this.parent,
+            });
+            if (this._start instanceof Delay) {
+                ev.time = this.parent.sim_time + this._start.delay;
+            } else if (this._start instanceof Time) {
+                ev.time = this._start.time;
+            }
+            this.parent.event_queue.push(ev);
+        }
+    }
+
+    call(...args) {
+        return new SimEvent(this.routine, {
+            time: this.parent.sim_time,
+            args: args,
+            priority: this.priority,
+            parent: this.parent,
+        });
+    }
+}
+
+// --- Helper: wait_delay / wait_time (used inside generator processes) ---
+
+function wait_delay(d) {
+    return new Delay(d);
+}
+
+function wait_time(t) {
+    return new Time(t);
+}

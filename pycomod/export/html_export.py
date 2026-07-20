@@ -101,6 +101,17 @@ def export_to_html(
             result = translator.translate_lambda(source, context_prefix=prefix)
             translated_code[name] = result['javascript'] if result['success'] else '0'
 
+    # Step 2b – Translate process functions to JavaScript --------------------
+    process_names = set(structure.get('processes', {}).keys())
+    for name, info in structure.get('processes', {}).items():
+        source = info.get('source')
+        if source:
+            prefix = '__'.join(name.split('__')[:-1])
+            result = translator.translate_process(
+                source, process_names=process_names, context_prefix=prefix)
+            if result['success']:
+                info['js_body'] = result['javascript']
+
     # Step 3 – Generate JavaScript simulation engine --------------------------
     js_engine = generate_js_engine(structure, translated_code)
 
@@ -164,6 +175,30 @@ def _build_header_html(title: str, banner_image_path: str | None) -> str:
     )
 
 
+def _decode_script_entities(html: str) -> str:
+    """Decode HTML entities inside <script type="application/json"> tags.
+
+    Bokeh HTML-encodes characters like > and < when serializing the
+    document model to JSON.  Inside a <script> tag these entities are
+    not decoded by the browser, which breaks JS operators such as >=.
+    """
+    import re
+
+    def _decode(m):
+        content = m.group(1)
+        content = content.replace('&gt;', '>')
+        content = content.replace('&lt;', '<')
+        content = content.replace('&amp;', '&')
+        return '<script type="application/json"' + content + '</script>'
+
+    return re.sub(
+        r'<script type="application/json"(.*?)</script>',
+        _decode,
+        html,
+        flags=re.DOTALL,
+    )
+
+
 def _post_process_html(html_filename: str, title: str = '',
                        banner_image_path: str | None = None) -> bool:
     """Inject header and custom CSS into the generated HTML file."""
@@ -172,6 +207,9 @@ def _post_process_html(html_filename: str, title: str = '',
 
     if "<body>" not in html_content or "</head>" not in html_content:
         return False
+
+    # Decode HTML entities in Bokeh JSON script tags
+    html_content = _decode_script_entities(html_content)
 
     css_path = Path(__file__).resolve().parent.parent.parent / "templates" / "css" / "styles.css"
     with open(css_path, "r", encoding="utf-8") as f:

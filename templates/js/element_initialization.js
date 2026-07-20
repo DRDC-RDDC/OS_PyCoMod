@@ -19,3 +19,12 @@ function initialize_elements(inputs) {
 
     return elements;
 }
+
+function initialize_processes(sim_context) {
+    const elements = sim_context.elements;
+    const processes = [];
+
+{{PROCESS_INITIALIZATION}}
+
+    return processes;
+}
