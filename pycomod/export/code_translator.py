@@ -7,8 +7,11 @@ from typing import Dict, Any, Optional, Set, List
 
 
 class CodeTranslator:
+    """Translate PyCoMod lambdas and processes to JavaScript."""
+
     def __init__(self, element_map: Dict[str, str] = None,
                  submodel_names: Set[str] = None):
+        """Store the element name map and sub-model names."""
         self.element_map = element_map or {}
         self.submodel_names = submodel_names or set()
 
@@ -35,19 +38,10 @@ class CodeTranslator:
             'np.e': 'Math.E',
         }
 
-    def translate_lambda(self, source: str,
-                         context_prefix: str = '') -> Dict[str, Any]:
-        """Translate a Python lambda to JavaScript.
-
-        Parameters
-        ----------
-        source : str
-            Python source containing the lambda.
-        context_prefix : str
-            The ``__``-separated prefix of the element this lambda belongs
-            to.  For example, if translating the equation ``r1__N``, pass
-            ``"r1"`` so that bare names like ``S`` resolve to ``r1__S``.
-        """
+    def translate_lambda(
+        self, source: str, context_prefix: str = ''
+    ) -> Dict[str, Any]:
+        """Translate a lambda source string to a JS expression."""
         result = {
             'python_source': source,
             'javascript': None,
@@ -92,19 +86,16 @@ class CodeTranslator:
         open_count = initial_body.count('(')
         close_count = initial_body.count(')')
 
-        if open_count == close_count:
-            return initial_body
-
         body = initial_body
         for char in remaining:
             if char == '(':
                 open_count += 1
                 body += char
             elif char == ')':
-                close_count += 1
-                body += char
                 if open_count == close_count:
                     break
+                close_count += 1
+                body += char
             elif char == ',' and open_count == close_count:
                 break
             else:
@@ -112,12 +103,9 @@ class CodeTranslator:
 
         return body
 
-    def _resolve_name(self, bare_name: str, context_prefix: str) -> Optional[str]:
-        """Resolve a bare name to a flat element-map key.
-
-        Tries ``context_prefix + '__' + bare_name`` first, then falls
-        back to the bare name itself.
-        """
+    def _resolve_name(self, bare_name: str,
+                      context_prefix: str) -> Optional[str]:
+        """Try context-prefixed name first, then fall back to bare name."""
         if context_prefix:
             prefixed = context_prefix + '__' + bare_name
             if prefixed in self.element_map:
@@ -130,27 +118,31 @@ class CodeTranslator:
                               context_prefix: str = '') -> str:
         js_expr = expr
 
-        # --- built-in time accessors ---
-        js_expr = js_expr.replace('self.t()', 'sim_time')
-        js_expr = js_expr.replace('self.date()', 'sim_date')
-        js_expr = js_expr.replace('self.dt()', 'dt')
+        js_expr = js_expr.replace('self.t()', 'sim_context.sim_time')
+        js_expr = js_expr.replace('self.date()', 'sim_context.sim_date')
+        js_expr = js_expr.replace('self.dt()', 'sim_context.dt')
 
-        # --- numpy → Math ---
         for np_func, js_func in self.numpy_to_js.items():
             js_expr = js_expr.replace(np_func, js_func)
+
+        _builtins_to_math = {
+            'min': 'Math.min', 'max': 'Math.max',
+            'abs': 'Math.abs', 'round': 'Math.round',
+            'int': 'Math.floor',
+        }
+        for py_name, js_name in _builtins_to_math.items():
+            js_expr = re.sub(r'\b' + py_name + r'\s*\(',
+                             js_name + '(', js_expr)
 
         js_expr = self._translate_power_operator(js_expr)
         js_expr = self._translate_integer_division(js_expr)
 
-        # --- Python logical operators ---
         js_expr = js_expr.replace(' and ', ' && ')
         js_expr = js_expr.replace(' or ', ' || ')
         js_expr = re.sub(r'\bnot\s+', '!', js_expr)
 
-        # --- sub-model dotted references: self.m.P  /  m.P  /  m.P() ---
         js_expr = self._translate_submodel_references(js_expr)
 
-        # --- self.element() references ---
         def _replace_self_ref(match):
             name = match.group(1)
             if name in self.submodel_names:
@@ -162,7 +154,6 @@ class CodeTranslator:
 
         js_expr = re.sub(r'self\.(\w+)\(\)', _replace_self_ref, js_expr)
 
-        # --- callable element references: P() ---
         protected_functions = {
             'sqrt', 'exp', 'log', 'log10', 'pow', 'floor', 'ceil', 'round',
             'min', 'max', 'sin', 'cos', 'tan', 'abs',
@@ -179,9 +170,38 @@ class CodeTranslator:
 
         js_expr = re.sub(r'\b(\w+)\(\)', replace_element, js_expr)
 
-        # --- bare name references ---
-        # Build a priority-ordered mapping: context-local names first, then
-        # root-level names.
+        # Handle dotted property access on known elements before the
+        # bare-name pass, which skips names followed by '.' to avoid breaking
+        # 'elements[...].value'.
+        def _replace_dotted(match):
+            name = match.group(1)
+            prop = match.group(2)
+            resolved = self._resolve_name(name, context_prefix)
+            if resolved is not None:
+                return "elements['%s'].%s" % (resolved, prop)
+            return match.group(0)
+
+        _dotted_names = set()
+        if context_prefix:
+            cp = context_prefix + '__'
+            for fn in self.element_map:
+                if fn.startswith(cp) and '__' not in fn[len(cp):]:
+                    _dotted_names.add(fn[len(cp):])
+        for fn in self.element_map:
+            if '__' not in fn:
+                _dotted_names.add(fn)
+
+        if _dotted_names:
+            _dn_pattern = '|'.join(
+                re.escape(n)
+                for n in sorted(_dotted_names, key=len, reverse=True)
+            )
+            js_expr = re.sub(
+                r"(?<!elements\[')(?<!\.)(?<!\w)\b(" + _dn_pattern
+                + r")\.(?!value\b)(\w+)",
+                _replace_dotted, js_expr)
+
+        # Context-local names take priority over root-level names.
         bare_replacements: Dict[str, str] = {}
         if context_prefix:
             cp = context_prefix + '__'
@@ -205,7 +225,10 @@ class CodeTranslator:
         return js_expr
 
     def _translate_submodel_references(self, expr: str) -> str:
-        """Translate ``self.m.P``, ``m.P``, or ``m.P()`` to ``elements['m__P'].value``."""
+        """Translate ``self.m.P``, ``m.P`` or ``m.P()`` to ``elements[...]``.
+
+        For example ``m.P`` becomes ``elements['m__P'].value``.
+        """
         if not self.submodel_names:
             return expr
 
@@ -231,28 +254,9 @@ class CodeTranslator:
         return re.sub(r'(\w+(?:\.\w+)?)\s*\*\*\s*(\w+(?:\.\w+)?)',
                       r'Math.pow(\1, \2)', expr)
 
-    # ------------------------------------------------------------------
-    # Process (generator function) translation
-    # ------------------------------------------------------------------
-
     def translate_process(self, source: str, process_names: Set[str] = None,
                           context_prefix: str = '') -> Dict[str, Any]:
-        """Translate a Python generator function to a JavaScript generator.
-
-        Parameters
-        ----------
-        source : str
-            Full Python source of the process function (including ``def``).
-        process_names : set of str
-            Names of other processes in the model, so calls like
-            ``attend_serial(n).start()`` can be recognised.
-        context_prefix : str
-            Sub-model prefix for resolving element names.
-
-        Returns
-        -------
-        dict with keys ``javascript``, ``success``, ``errors``.
-        """
+        """Translate a Python generator function to a JavaScript generator."""
         result = {
             'python_source': source,
             'javascript': None,
@@ -261,16 +265,13 @@ class CodeTranslator:
         }
 
         try:
-            # Strip decorator lines before parsing
             lines = source.splitlines()
             func_start = 0
             for i, line in enumerate(lines):
-                stripped = line.lstrip()
-                if stripped.startswith('def '):
+                if line.lstrip().startswith('def '):
                     func_start = i
                     break
-            source = '\n'.join(lines[func_start:])
-            source = textwrap.dedent(source)
+            source = textwrap.dedent('\n'.join(lines[func_start:]))
             tree = ast.parse(source)
 
             func_node = None
@@ -290,8 +291,7 @@ class CodeTranslator:
                 context_prefix=context_prefix,
                 numpy_to_js=self.numpy_to_js,
             )
-            js_body = visitor.translate_function(func_node)
-            result['javascript'] = js_body
+            result['javascript'] = visitor.translate_function(func_node)
             result['success'] = True
 
         except Exception as e:
@@ -322,25 +322,29 @@ class _ProcessJSVisitor:
     def _indent(self, level: int) -> str:
         return '    ' * level
 
-    # ------------------------------------------------------------------
-    # Statement visitors
-    # ------------------------------------------------------------------
-
     def _visit_stmt(self, node, indent: int) -> List[str]:
         if isinstance(node, ast.Expr):
             expr_js = self._visit_expr(node.value)
             if isinstance(node.value, ast.Yield):
-                return ['%syield %s;' % (self._indent(indent), self._yield_value(node.value))]
+                return [
+                    '%syield %s;'
+                    % (self._indent(indent), self._yield_value(node.value))
+                ]
             return ['%s%s;' % (self._indent(indent), expr_js)]
 
         elif isinstance(node, ast.Assign):
             targets = [self._visit_expr(t) for t in node.targets]
             value = self._visit_expr(node.value)
             if isinstance(node.value, ast.Yield):
-                return ['%s%s = yield %s;' % (self._indent(indent), targets[0], self._yield_value(node.value))]
+                tgt = targets[0]
+                decl = 'let ' if "elements[" not in tgt else ''
+                return ['%s%s%s = yield %s;' % (self._indent(
+                    indent), decl, tgt, self._yield_value(node.value))]
             lines = []
             for t in targets:
-                lines.append('%slet %s = %s;' % (self._indent(indent), t, value))
+                lines.append(
+                    '%slet %s = %s;' % (self._indent(indent), t, value)
+                )
             return lines
 
         elif isinstance(node, ast.AugAssign):
@@ -352,7 +356,10 @@ class _ProcessJSVisitor:
         elif isinstance(node, ast.Return):
             if node.value is None:
                 return ['%sreturn;' % self._indent(indent)]
-            return ['%sreturn %s;' % (self._indent(indent), self._visit_expr(node.value))]
+            return [
+                '%sreturn %s;'
+                % (self._indent(indent), self._visit_expr(node.value))
+            ]
 
         elif isinstance(node, ast.If):
             lines = []
@@ -361,7 +368,9 @@ class _ProcessJSVisitor:
             for stmt in node.body:
                 lines.extend(self._visit_stmt(stmt, indent + 1))
             if node.orelse:
-                if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
+                if len(node.orelse) == 1 and isinstance(
+                    node.orelse[0], ast.If
+                ):
                     lines.append('%s} else' % self._indent(indent))
                     lines.extend(self._visit_stmt(node.orelse[0], indent))
                 else:
@@ -386,7 +395,10 @@ class _ProcessJSVisitor:
             target = self._visit_expr(node.target)
             iter_expr = self._visit_expr(node.iter)
             lines = []
-            lines.append('%sfor (const %s of %s) {' % (self._indent(indent), target, iter_expr))
+            lines.append(
+                '%sfor (const %s of %s) {'
+                % (self._indent(indent), target, iter_expr)
+            )
             for stmt in node.body:
                 lines.extend(self._visit_stmt(stmt, indent + 1))
             lines.append('%s}' % self._indent(indent))
@@ -401,11 +413,10 @@ class _ProcessJSVisitor:
         elif isinstance(node, ast.Pass):
             return []
 
-        return ['%s/* untranslated: %s */' % (self._indent(indent), type(node).__name__)]
-
-    # ------------------------------------------------------------------
-    # Expression visitors
-    # ------------------------------------------------------------------
+        return [
+            '%s/* untranslated: %s */'
+            % (self._indent(indent), type(node).__name__)
+        ]
 
     def _visit_expr(self, node) -> str:
         if isinstance(node, ast.Constant):
@@ -468,7 +479,7 @@ class _ProcessJSVisitor:
         elif isinstance(node, ast.Yield):
             return 'yield %s' % self._yield_value(node)
 
-        elif isinstance(node, ast.Tuple) or isinstance(node, ast.List):
+        elif isinstance(node, (ast.Tuple, ast.List)):
             elts = [self._visit_expr(e) for e in node.elts]
             return '[%s]' % ', '.join(elts)
 
@@ -482,39 +493,69 @@ class _ProcessJSVisitor:
     def _visit_call(self, node: ast.Call) -> str:
         args = [self._visit_expr(a) for a in node.args]
 
-        # self.wait_delay(x) → wait_delay(x)
-        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+        if isinstance(node.func, ast.Attribute) and isinstance(
+            node.func.value, ast.Name
+        ):
             if node.func.value.id == 'self':
                 method = node.func.attr
                 if method == 'wait_delay':
                     return 'wait_delay(%s)' % ', '.join(args)
                 elif method == 'wait_time':
                     return 'wait_time(%s)' % ', '.join(args)
+                elif method == 'wait_step':
+                    return 'wait_step(%s)' % ', '.join(args)
+                elif method == 'wait_sim_start':
+                    return 'wait_sim_start()'
+                elif method == 'wait_date':
+                    return 'wait_date(%s)' % ', '.join(args)
+                elif method == 'wait_condition':
+                    cond_js = self._translate_condition_arg(node.args[0])
+                    return 'wait_condition(%s)' % cond_js
+                elif method == 'wait_message':
+                    return 'wait_message(%s)' % ', '.join(args)
+                elif method == 'wait_any':
+                    return 'wait_any(%s)' % ', '.join(args)
+                elif method == 'wait_all':
+                    return 'wait_all(%s)' % ', '.join(args)
+                elif method == 'wait_sequence':
+                    return 'wait_sequence(%s)' % ', '.join(args)
+                elif method == 'send_message':
+                    return 'send_message(%s)' % ', '.join(args)
                 elif method == 't':
                     return 'sim_context.sim_time'
                 elif method == 'dt':
                     return 'sim_context.dt'
 
-        # pool.add(x) / pool.remove(x)
         if isinstance(node.func, ast.Attribute):
             obj = node.func.value
             method = node.func.attr
-            if isinstance(obj, ast.Name) and method in ('add', 'remove'):
-                el_ref = self._resolve_element_name(obj.id)
-                if method == 'add':
-                    return '(%s += %s)' % (el_ref, args[0])
+            if method in ('add', 'remove'):
+                el_ref = None
+                if isinstance(obj, ast.Name):
+                    el_ref = self._resolve_element_name(obj.id)
                 else:
-                    return '(%s -= %s)' % (el_ref, args[0])
-            # process_name(args).start()
+                    chain = self._collect_attribute_chain(obj)
+                    if chain:
+                        flat_name = '__'.join(chain)
+                        resolved = self._resolve_element_name(flat_name)
+                        if resolved != flat_name:
+                            el_ref = resolved
+                if el_ref is not None:
+                    if method == 'add':
+                        return '(%s += %s)' % (el_ref, args[0])
+                    else:
+                        return '(%s -= %s)' % (el_ref, args[0])
             if method == 'start' and isinstance(obj, ast.Call):
                 inner = self._visit_call(obj)
+                start_args = [self._visit_expr(a) for a in node.args]
+                if start_args:
+                    return '%s.start(%s)' % (inner, ', '.join(start_args))
                 return '%s.start()' % inner
 
-        # other_process(n) → other_process.call(n)
-        if isinstance(node.func, ast.Name) and node.func.id in self.process_names:
+        if isinstance(node.func,
+                      ast.Name) and node.func.id in self.process_names:
             return '%s.call(%s)' % (node.func.id, ', '.join(args))
 
-        # Built-in function mapping
         func_name = self._visit_expr(node.func)
         builtin_map = {
             'round': 'Math.round',
@@ -531,7 +572,6 @@ class _ProcessJSVisitor:
                     return '%s.length' % args[0] if args else '0'
                 return '%s(%s)' % (js_name, ', '.join(args))
 
-        # numpy
         for np_func, js_func in self.numpy_to_js.items():
             if func_name == np_func.replace('np.', 'np_'):
                 return '%s(%s)' % (js_func, ', '.join(args))
@@ -539,15 +579,40 @@ class _ProcessJSVisitor:
         return '%s(%s)' % (func_name, ', '.join(args))
 
     def _visit_attribute(self, node: ast.Attribute) -> str:
-        # self.X() style references handled in _visit_call
         if isinstance(node.value, ast.Name) and node.value.id == 'self':
             return self._resolve_element_name(node.attr)
+
+        chain = self._collect_attribute_chain(node)
+        if chain:
+            flat_name = '__'.join(chain)
+            resolved = self._resolve_element_name(flat_name)
+            if resolved != flat_name:
+                return resolved
+
         value = self._visit_expr(node.value)
         return '%s.%s' % (value, node.attr)
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+    def _collect_attribute_chain(self, node) -> list:
+        """Return the dotted name parts of an Attribute node.
+
+        For example ``sir.I`` gives ``['sir', 'I']``.
+        """
+        parts = []
+        current = node
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if isinstance(current, ast.Name) and current.id != 'self':
+            parts.append(current.id)
+            parts.reverse()
+            return parts
+        return None
+
+    def _translate_condition_arg(self, node):
+        if isinstance(node, ast.Lambda):
+            body_js = self._visit_expr(node.body)
+            return '() => %s' % body_js
+        return self._visit_expr(node)
 
     def _resolve_element_name(self, name: str) -> str:
         if self.context_prefix:

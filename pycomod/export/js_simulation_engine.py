@@ -2,15 +2,22 @@
 
 from typing import Dict, Any
 from .template_loader import get_loader
+from .code_translator import CodeTranslator
 
 
 class JavaScriptSimulationEngine:
-    def __init__(self, model_structure: Dict[str, Any], translated_code: Dict[str, str]):
+    """Assemble the browser-side simulation engine for one model."""
+
+    def __init__(
+        self, model_structure: Dict[str, Any], translated_code: Dict[str, str]
+    ):
+        """Store the model structure and translated code."""
         self.model_structure = model_structure
         self.translated_code = translated_code
         self.template_loader = get_loader()
 
     def generate_engine(self) -> str:
+        """Return the complete JavaScript engine source."""
         js_parts = [
             self.template_loader.load_js_template('header.js'),
             self.template_loader.load_js_template('element_classes.js'),
@@ -31,7 +38,8 @@ class JavaScriptSimulationEngine:
             init_val = info['init_value']
             allow_neg = info.get('allow_negative', False)
             pool_init.append(
-                "    elements['%s'] = new Pool('%s', inputs['%s'] !== undefined ? inputs['%s'] : %s, %s);"
+                "    elements['%s'] = new Pool('%s', "
+                "inputs['%s'] !== undefined ? inputs['%s'] : %s, %s);"
                 % (name, name, name, name, init_val, str(allow_neg).lower())
             )
 
@@ -39,7 +47,8 @@ class JavaScriptSimulationEngine:
         for name, info in parameters.items():
             init_val = info['init_value']
             param_init.append(
-                "    elements['%s'] = new Parameter('%s', inputs['%s'] !== undefined ? inputs['%s'] : %s);"
+                "    elements['%s'] = new Parameter('%s', "
+                "inputs['%s'] !== undefined ? inputs['%s'] : %s);"
                 % (name, name, name, name, init_val)
             )
 
@@ -56,11 +65,19 @@ class JavaScriptSimulationEngine:
                     "    elements['%s'] = new Step('%s', "
                     "_parse_csv(inputs['%s_values'], %s), "
                     "_parse_csv(inputs['%s_times'], %s), "
-                    "inputs['%s_default'] !== undefined ? inputs['%s_default'] : %s);"
-                    % (name, name,
-                       name, default_vals,
-                       name, default_times,
-                       name, name, default_default)
+                    "inputs['%s_default'] !== undefined "
+                    "? inputs['%s_default'] : %s);"
+                    % (
+                        name,
+                        name,
+                        name,
+                        default_vals,
+                        name,
+                        default_times,
+                        name,
+                        name,
+                        default_default,
+                    )
                 )
             elif eq_type == 'impulse':
                 default_vals = info['values']
@@ -90,11 +107,33 @@ class JavaScriptSimulationEngine:
             js_expr = self.translated_code.get(name, '0')
             src_ref = "elements['%s']" % src if src else 'null'
             dest_ref = "elements['%s']" % dest if dest else 'null'
-            variance_js = str(variance_value) if variance_value is not None else 'null'
+            variance_js = str(
+                variance_value) if variance_value is not None else 'null'
+
+            when_js = 'null'
+            when_info = info.get('when')
+            if when_info is not None:
+                when_expr = self.translated_code.get(name + '__when', 'true')
+                when_js = '() => %s' % when_expr
+
+            limit_value = info.get('limit')
+            limit_js = str(limit_value) if limit_value is not None else 'null'
+
             flow_init.append(
-                "    elements['%s'] = new Flow('%s', () => %s, %s, %s, %s, %s, %s);"
-                % (name, name, js_expr, src_ref, dest_ref,
-                   str(discrete).lower(), str(stochastic).lower(), variance_js)
+                "    elements['%s'] = new Flow('%s', () => %s, "
+                "%s, %s, %s, %s, %s, %s, %s);"
+                % (
+                    name,
+                    name,
+                    js_expr,
+                    src_ref,
+                    dest_ref,
+                    str(discrete).lower(),
+                    str(stochastic).lower(),
+                    variance_js,
+                    when_js,
+                    limit_js,
+                )
             )
 
         process_init = self._generate_process_initialization()
@@ -110,6 +149,17 @@ class JavaScriptSimulationEngine:
             }
         )
 
+    def _translate_condition_start(self, cond_source, process_name):
+        prefix = '__'.join(process_name.split('__')[:-1])
+        translator = CodeTranslator(
+            self.model_structure.get('element_map', {}),
+            self.model_structure.get('submodel_names', set()),
+        )
+        result = translator.translate_lambda(
+            cond_source, context_prefix=prefix)
+        if result['success']:
+            return '() => %s' % result['javascript']
+        return '() => false'
 
     def _generate_process_initialization(self):
         processes = self.model_structure.get('processes', {})
@@ -124,13 +174,19 @@ class JavaScriptSimulationEngine:
                 start_js = 'new Time(%s)' % start_value
             elif start_type == 'timestep':
                 start_js = 'new Delay(%s * sim_context.dt)' % start_value
+            elif start_type == 'date':
+                start_js = 'new DateMarker("%s")' % start_value
+            elif start_type == 'condition':
+                cond_js = self._translate_condition_start(start_value, name)
+                start_js = 'new ConditionStart(%s)' % cond_js
 
             js_body = info.get('js_body')
             if not js_body:
                 continue
             priority = info.get('priority', 0)
 
-            # Re-indent the multi-line function body to align under the assignment
+            # Re-indent continuation lines so the body aligns under the const
+            # assignment
             js_lines = js_body.splitlines()
             if len(js_lines) > 1:
                 indented = js_lines[0]
@@ -154,5 +210,6 @@ class JavaScriptSimulationEngine:
 
 def generate_js_engine(model_structure: Dict[str, Any],
                        translated_code: Dict[str, str]) -> str:
+    """Return the JavaScript engine for a model structure."""
     engine = JavaScriptSimulationEngine(model_structure, translated_code)
     return engine.generate_engine()

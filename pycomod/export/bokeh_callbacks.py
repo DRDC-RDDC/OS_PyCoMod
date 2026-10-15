@@ -1,11 +1,20 @@
-"""JavaScript callbacks for Bokeh UI components."""
+"""Attach CustomJS callbacks to the widgets of the generated UI."""
 
 from bokeh.models import CustomJS
 from .template_loader import get_loader
 
+# Setting renderer.muted from JS doesn't restyle the legend (it only updates
+# on click); a change on a legend item makes it re-render all entries.
+_LEGEND_REFRESH = (
+    '    if (legend.items.length > 0) legend.items[0].change.emit();'
+)
+
 
 class BokehCallbackGenerator:
+    """Wire the Run, Reset, Save/Load, CSV, PNG and toggle callbacks."""
+
     def __init__(self, ui_generator, js_engine: str = ''):
+        """Store the UI generator and the JS engine source."""
         self.ui_generator = ui_generator
         self.js_engine = js_engine
         self.model_structure = ui_generator.model_structure
@@ -17,6 +26,7 @@ class BokehCallbackGenerator:
         return outputs + si_outputs
 
     def attach_all_callbacks(self):
+        """Attach every callback to its widget."""
         self._attach_run_callback()
         self._attach_reset_callback()
         self._attach_output_toggle_callback()
@@ -47,11 +57,17 @@ class BokehCallbackGenerator:
             args['input_%s' % name] = widget
         for name in self._get_all_outputs():
             if name in self.ui_generator.line_renderers:
-                args['single_line_%s' % name] = self.ui_generator.line_renderers[name]
+                args['single_line_%s' % name] = (
+                    self.ui_generator.line_renderers[name]
+                )
             if name in self.ui_generator.mc_band_renderers:
-                args['mc_band_%s' % name] = self.ui_generator.mc_band_renderers[name]
+                args['mc_band_%s' % name] = (
+                    self.ui_generator.mc_band_renderers[name]
+                )
             if name in self.ui_generator.mc_mean_renderers:
-                args['mc_mean_%s' % name] = self.ui_generator.mc_mean_renderers[name]
+                args['mc_mean_%s' % name] = (
+                    self.ui_generator.mc_mean_renderers[name]
+                )
         return args
 
     def _attach_run_callback(self):
@@ -65,7 +81,9 @@ class BokehCallbackGenerator:
 
         input_collection = []
         for name in self.ui_generator.input_widgets.keys():
-            input_collection.append('        %s: input_%s.value,' % (name, name))
+            input_collection.append(
+                '        %s: input_%s.value,' % (name, name)
+            )
 
         single_hide = []
         single_show = []
@@ -74,8 +92,12 @@ class BokehCallbackGenerator:
         for i, n in enumerate(all_outputs):
             chk = 'checkboxes.active.includes(%d)' % i
             if n in self.ui_generator.line_renderers:
-                single_hide.append('        single_line_%s.visible = false;' % n)
-                single_show.append('        single_line_%s.visible = %s;' % (n, chk))
+                single_hide.append(
+                    '        single_line_%s.visible = false;' % n
+                )
+                single_show.append(
+                    '        single_line_%s.visible = %s;' % (n, chk)
+                )
             if n in self.ui_generator.mc_band_renderers:
                 mc_hide.append('        mc_band_%s.visible = false;' % n)
                 mc_show.append('        mc_band_%s.visible = %s;' % (n, chk))
@@ -102,8 +124,7 @@ class BokehCallbackGenerator:
         )
 
         callback = CustomJS(
-            args=args,
-            code=self.js_engine + '\n\n' + callback_code,
+            args=args, code=self.js_engine + '\n\n' + callback_code
         )
         self.ui_generator.control_buttons['run_model'].js_on_click(callback)
 
@@ -140,22 +161,50 @@ class BokehCallbackGenerator:
         clear_data_lines = ['    const clear_data = { time: [] };']
         for name in all_outputs:
             clear_data_lines.append("    clear_data['%s'] = [];" % name)
-            clear_data_lines.append("    clear_data['%s_mc_median'] = [];" % name)
-            clear_data_lines.append("    clear_data['%s_mc_p_low'] = [];" % name)
-            clear_data_lines.append("    clear_data['%s_mc_p_high'] = [];" % name)
+            clear_data_lines.append(
+                "    clear_data['%s_mc_median'] = [];" % name
+            )
+            clear_data_lines.append(
+                "    clear_data['%s_mc_p_low'] = [];" % name
+            )
+            clear_data_lines.append(
+                "    clear_data['%s_mc_p_high'] = [];" % name
+            )
         if self.ui_generator.plot_source is not None:
             clear_data_lines.append('    plot_source.data = clear_data;')
         if self.ui_generator.plot_figure is not None:
             clear_data_lines.append('    plot_figure.reset.emit();')
+        if self.ui_generator.output_checkboxes is not None:
+            args['checkboxes'] = self.ui_generator.output_checkboxes
+            clear_data_lines.append(
+                '    checkboxes.active = %s;'
+                % list(self.ui_generator.output_checkboxes.active)
+            )
 
         for i, name in enumerate(all_outputs):
             is_si = i >= n_primary
+            # Also clear legend mute state (legend click_policy='mute')
             if name in self.ui_generator.line_renderers:
-                clear_data_lines.append('    single_line_%s.visible = %s;' % (name, 'false' if is_si else 'true'))
+                clear_data_lines.append(
+                    '    single_line_%s.visible = %s;'
+                    % (name, 'false' if is_si else 'true')
+                )
+                clear_data_lines.append(
+                    '    single_line_%s.muted = false;' % name
+                )
             if name in self.ui_generator.mc_band_renderers:
-                clear_data_lines.append('    mc_band_%s.visible = false;' % name)
+                clear_data_lines.append(
+                    '    mc_band_%s.visible = false;' % name
+                )
+                clear_data_lines.append('    mc_band_%s.muted = false;' % name)
             if name in self.ui_generator.mc_mean_renderers:
-                clear_data_lines.append('    mc_mean_%s.visible = false;' % name)
+                clear_data_lines.append(
+                    '    mc_mean_%s.visible = false;' % name
+                )
+                clear_data_lines.append('    mc_mean_%s.muted = false;' % name)
+        if self.ui_generator.legend is not None:
+            args['legend'] = self.ui_generator.legend
+            clear_data_lines.append(_LEGEND_REFRESH)
 
         callback_code = self.template_loader.render_js_callback(
             'reset_callback.js',
@@ -171,8 +220,8 @@ class BokehCallbackGenerator:
             }
         )
 
-        full_code = callback_code.rstrip() + '\n\n// Clear plot\n' + '\n'.join(clear_data_lines)
-
+        full_code = (callback_code.rstrip() + '\n\n// Clear plot\n'
+                     + '\n'.join(clear_data_lines))
         callback = CustomJS(args=args, code=full_code)
         self.ui_generator.control_buttons['reset'].js_on_click(callback)
 
@@ -192,15 +241,28 @@ class BokehCallbackGenerator:
         for name, renderer in self.ui_generator.mc_mean_renderers.items():
             args['mc_mean_%s' % name] = renderer
 
-        toggle_lines = ['    const is_mc = mode_select.value === "Monte Carlo";']
+        toggle_lines = [
+            '    const is_mc = mode_select.value === "Monte Carlo";']
         for i, name in enumerate(all_outputs):
-            toggle_lines.append('    const checked_%s = checkboxes.active.includes(%d);' % (name, i))
+            toggle_lines.append(
+                '    const checked_%s = checkboxes.active.includes(%d);'
+                % (name, i)
+            )
             if name in self.ui_generator.line_renderers:
-                toggle_lines.append('    single_line_%s.visible = !is_mc && checked_%s;' % (name, name))
+                toggle_lines.append(
+                    '    single_line_%s.visible = !is_mc && checked_%s;'
+                    % (name, name)
+                )
             if name in self.ui_generator.mc_band_renderers:
-                toggle_lines.append('    mc_band_%s.visible = is_mc && checked_%s;' % (name, name))
+                toggle_lines.append(
+                    '    mc_band_%s.visible = is_mc && checked_%s;'
+                    % (name, name)
+                )
             if name in self.ui_generator.mc_mean_renderers:
-                toggle_lines.append('    mc_mean_%s.visible = is_mc && checked_%s;' % (name, name))
+                toggle_lines.append(
+                    '    mc_mean_%s.visible = is_mc && checked_%s;'
+                    % (name, name)
+                )
 
         callback_code = self.template_loader.render_js_callback(
             'output_toggle_callback.js',
@@ -215,7 +277,9 @@ class BokehCallbackGenerator:
 
         input_collection = []
         for name in self.ui_generator.input_widgets.keys():
-            input_collection.append('        "%s": input_%s.value,' % (name, name))
+            input_collection.append(
+                '        "%s": input_%s.value,' % (name, name)
+            )
 
         callback_code = self.template_loader.render_js_callback(
             'save_inputs_callback.js',
@@ -231,7 +295,8 @@ class BokehCallbackGenerator:
         input_assignments = []
         for name in self.ui_generator.input_widgets.keys():
             input_assignments.append(
-                '                if (inputs.%s !== undefined) input_%s.value = inputs.%s;'
+                '                if (inputs.%s !== undefined) '
+                'input_%s.value = inputs.%s;'
                 % (name, name, name)
             )
 
@@ -261,13 +326,12 @@ class BokehCallbackGenerator:
 
     def _attach_save_png_callback(self):
         args = self._build_common_args()
-
-        callback_code = self.template_loader.render_js_callback('save_png_callback.js')
-
+        callback_code = self.template_loader.render_js_callback(
+            'save_png_callback.js')
         callback = CustomJS(args=args, code=callback_code)
         self.ui_generator.control_buttons['save_png'].js_on_click(callback)
 
 
 def attach_callbacks(ui_generator, js_engine: str = ''):
-    callback_gen = BokehCallbackGenerator(ui_generator, js_engine)
-    callback_gen.attach_all_callbacks()
+    """Attach all callbacks for *ui_generator* using *js_engine*."""
+    BokehCallbackGenerator(ui_generator, js_engine).attach_all_callbacks()

@@ -1,7 +1,4 @@
-"""Interactive Bokeh UI generation for PyCoMod models.
-
-Compatible with Bokeh 2.4.1 and Python 3.9.7.
-"""
+"""Build the Bokeh layout (inputs, plot, tabs, buttons)."""
 
 import re
 from collections import OrderedDict
@@ -11,16 +8,18 @@ from pathlib import Path
 from bokeh.layouts import column, row
 from bokeh.models import (
     Div, Button, CustomJS, NumericInput, Select, Tabs, TextInput,
-    CheckboxGroup, ColumnDataSource, ScrollBox, ImportedStyleSheet,
-    CustomJSTickFormatter, Legend, LegendItem,
+    CheckboxGroup, ColumnDataSource, Legend, LegendItem,
 )
 from bokeh.plotting import figure
 
-# Bokeh 2.4.x uses Panel; Bokeh 3.x renamed it to TabPanel
-try:
-    from bokeh.models import TabPanel as _TabPanel
-except ImportError:
-    from bokeh.models.widgets import Panel as _TabPanel
+from .bokeh_compat import (
+    TabPanel as _TabPanel,
+    CustomJSTickFormatter,
+    make_scrollable,
+    make_stylesheet,
+    make_div,
+    BOKEH_2,
+)
 
 from .template_loader import get_loader
 
@@ -37,8 +36,7 @@ def _display(name: str, display_names: Dict[str, str]) -> str:
 def _group_by_prefix(items: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Group items by sub-model prefix (everything before the last ``__``).
 
-    Returns an OrderedDict where key ``''`` holds root-level items and
-    other keys hold sub-model groups (e.g. ``r1``, ``r1__inner``).
+    Key ``''`` holds root-level items; other keys hold sub-model groups.
     """
     groups: Dict[str, Dict[str, Any]] = OrderedDict()
     groups[''] = OrderedDict()
@@ -52,35 +50,39 @@ def _group_by_prefix(items: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 class BokehUIGenerator:
+    """Create the Bokeh widgets and layout for an inspected model."""
+
     def __init__(self, model_structure: Dict[str, Any],
                  title: str = 'PyCoMod Model',
-                 help_text: str = '',
-                 banner_image_path: Optional[str] = None):
+                 help_text: str = ''):
+        """Store the model structure, title and help text."""
         self.model_structure = model_structure
         self.title = title
         self.help_text = help_text
-        self.banner_image_path = banner_image_path
         self.template_loader = get_loader()
-        self.display_names: Dict[str, str] = model_structure.get('display_names', {})
+        self.display_names: Dict[str, str] = model_structure.get(
+            'display_names', {})
 
         self.input_widgets: Dict[str, Any] = {}
         self.control_buttons: Dict[str, Any] = {}
         self.message_div = None
         self.tabs = None
 
-        # Plot components
         self.plot_figure = None
         self.plot_source: Optional[ColumnDataSource] = None
         self.line_renderers: Dict[str, Any] = {}
         self.mc_band_renderers: Dict[str, Any] = {}
         self.mc_mean_renderers: Dict[str, Any] = {}
         self.output_checkboxes = None
+        self.legend = None
         self.xaxis_formatter = None
 
-        css_path = Path(__file__).resolve().parent.parent.parent / "templates" / "css" / "styles.css"
-        self.css = ImportedStyleSheet(url=css_path.as_uri())
+        self._css_path = (Path(__file__).resolve().parent.parent.parent
+                          / "templates" / "css" / "styles.css")
+        self.css = make_stylesheet(self._css_path)
 
     def generate_layout(self):
+        """Build all panels and return the top-level layout."""
         self._create_model_input_panel()
         self._create_run_input_panel()
         self._create_control_panel()
@@ -88,10 +90,12 @@ class BokehUIGenerator:
         self._create_message_panel()
         self._create_tabs()
 
+        _mode = 'stretch_width' if BOKEH_2 else 'stretch_both'
+
         left_panel = column(
             self.tabs,
             self.control_panel,
-            sizing_mode='stretch_both',
+            sizing_mode=_mode,
             min_width=320,
             max_width=450,
         )
@@ -99,32 +103,31 @@ class BokehUIGenerator:
         # This margin makes space for the banner's overhang on the right side
         right_panel = column(
             self.plot_panel,
-            sizing_mode='stretch_both',
-            margin=(0, 160, 0, 0),
+            sizing_mode=_mode,
+            margin=(0, 0, 0, 0) if BOKEH_2 else (0, 160, 0, 0),
         )
 
         main_content = row(
             left_panel,
             right_panel,
-            sizing_mode='stretch_both',
+            sizing_mode=_mode,
         )
 
         return column(
             main_content,
             self.message_div,
-            sizing_mode='stretch_both',
+            sizing_mode=_mode,
             margin=(0, 0, 0, 0),
         )
-
-    # ------------------------------------------------------------------
-    # Helpers for building grouped widget sections
-    # ------------------------------------------------------------------
 
     def _build_scalar_widgets(self, items: Dict[str, Any]) -> List:
         widgets = []
         for name, info in items.items():
             if info['is_vector']:
-                widget = Div(text='<b>%s:</b> Vector (shape: %s)' % (_display(name, self.display_names), info['shape']))
+                widget = Div(
+                    text='<b>%s:</b> Vector (shape: %s)'
+                    % (_display(name, self.display_names), info['shape'])
+                )
             else:
                 widget = NumericInput(
                     title=_display(name, self.display_names),
@@ -141,14 +144,24 @@ class BokehUIGenerator:
         for name, info in step_items.items():
             values_str = ', '.join(str(v) for v in info['values'])
             times_str = ', '.join(str(t) for t in info['times'])
-            name_label = Div(text='<b>%s</b>' % _display(name, self.display_names))
-            values_widget = TextInput(title='Values', value=values_str, width=360)
+            name_label = Div(
+                text='<b>%s</b>' % _display(name, self.display_names)
+            )
+            values_widget = TextInput(
+                title='Values', value=values_str, width=360
+            )
             times_widget = TextInput(title='Times', value=times_str, width=360)
-            default_widget = NumericInput(title='Default', value=float(info['default']), mode='float', width=360)
+            default_widget = NumericInput(
+                title='Default',
+                value=float(info['default']),
+                mode='float',
+                width=360,
+            )
             self.input_widgets['%s_values' % name] = values_widget
             self.input_widgets['%s_times' % name] = times_widget
             self.input_widgets['%s_default' % name] = default_widget
-            widgets.extend([name_label, values_widget, times_widget, default_widget])
+            widgets.extend([name_label, values_widget,
+                           times_widget, default_widget])
         return widgets
 
     def _build_impulse_widgets(self, impulse_items: Dict[str, Any]) -> List:
@@ -156,52 +169,67 @@ class BokehUIGenerator:
         for name, info in impulse_items.items():
             values_str = ', '.join(str(v) for v in info['values'])
             times_str = ', '.join(str(t) for t in info['times'])
-            name_label = Div(text='<b>%s</b>' % _display(name, self.display_names))
-            values_widget = TextInput(title='Values', value=values_str, width=360)
+            name_label = Div(
+                text='<b>%s</b>' % _display(name, self.display_names)
+            )
+            values_widget = TextInput(
+                title='Values', value=values_str, width=360
+            )
             times_widget = TextInput(title='Times', value=times_str, width=360)
             self.input_widgets['%s_values' % name] = values_widget
             self.input_widgets['%s_times' % name] = times_widget
             widgets.extend([name_label, values_widget, times_widget])
         return widgets
 
-    # ------------------------------------------------------------------
-    # Panel builders
-    # ------------------------------------------------------------------
-
     def _create_model_input_panel(self):
-        model_input_panel = column(sizing_mode='stretch_width', margin=(0, 20, 0, 20))
+        model_input_panel = column(
+            sizing_mode='stretch_width', margin=(0, 20, 0, 20)
+        )
 
         pool_groups = _group_by_prefix(self.model_structure['pools'])
         param_groups = _group_by_prefix(self.model_structure['parameters'])
 
         equations = self.model_structure.get('equations', {})
-        step_items = {k: v for k, v in equations.items() if v['type'] == 'step'}
-        impulse_items = {k: v for k, v in equations.items() if v['type'] == 'impulse'}
+        step_items = {
+            k: v for k, v in equations.items() if v['type'] == 'step'
+        }
+        impulse_items = {
+            k: v for k, v in equations.items() if v['type'] == 'impulse'
+        }
         step_groups = _group_by_prefix(step_items)
         impulse_groups = _group_by_prefix(impulse_items)
 
-        # --- Root-level elements ---
         root_pools = pool_groups.get('', {})
         if root_pools:
-            model_input_panel.children.append(Div(text='<h3>Pools (Initial Values)</h3>'))
-            model_input_panel.children.extend(self._build_scalar_widgets(root_pools))
+            model_input_panel.children.append(
+                Div(text='<h3>Pools (Initial Values)</h3>'))
+            model_input_panel.children.extend(
+                self._build_scalar_widgets(root_pools)
+            )
 
         root_params = param_groups.get('', {})
         if root_params:
             model_input_panel.children.append(Div(text='<h3>Parameters</h3>'))
-            model_input_panel.children.extend(self._build_scalar_widgets(root_params))
+            model_input_panel.children.extend(
+                self._build_scalar_widgets(root_params)
+            )
 
         root_steps = step_groups.get('', {})
         if root_steps:
-            model_input_panel.children.append(Div(text='<h3>Step Functions</h3>'))
-            model_input_panel.children.extend(self._build_step_widgets(root_steps))
+            model_input_panel.children.append(
+                Div(text='<h3>Step Functions</h3>'))
+            model_input_panel.children.extend(
+                self._build_step_widgets(root_steps)
+            )
 
         root_impulses = impulse_groups.get('', {})
         if root_impulses:
-            model_input_panel.children.append(Div(text='<h3>Impulse Functions</h3>'))
-            model_input_panel.children.extend(self._build_impulse_widgets(root_impulses))
+            model_input_panel.children.append(
+                Div(text='<h3>Impulse Functions</h3>'))
+            model_input_panel.children.extend(
+                self._build_impulse_widgets(root_impulses)
+            )
 
-        # --- Sub-model elements ---
         all_prefixes = sorted(set(
             list(pool_groups.keys()) +
             list(param_groups.keys()) +
@@ -222,26 +250,40 @@ class BokehUIGenerator:
                 continue
 
             model_input_panel.children.append(
-                Div(text='<h3 style="border-top: 1px solid #ccc; padding-top: 10px;">Sub-model: %s</h3>' % display_prefix)
+                Div(text=('<h3 style="border-top: 1px solid #ccc; '
+                          'padding-top: 10px;">Sub-model: %s</h3>'
+                          % display_prefix))
             )
 
             if sm_pools:
                 model_input_panel.children.append(Div(text='<h4>Pools</h4>'))
-                model_input_panel.children.extend(self._build_scalar_widgets(sm_pools))
+                model_input_panel.children.extend(
+                    self._build_scalar_widgets(sm_pools))
             if sm_params:
-                model_input_panel.children.append(Div(text='<h4>Parameters</h4>'))
-                model_input_panel.children.extend(self._build_scalar_widgets(sm_params))
+                model_input_panel.children.append(
+                    Div(text='<h4>Parameters</h4>'))
+                model_input_panel.children.extend(
+                    self._build_scalar_widgets(sm_params))
             if sm_steps:
-                model_input_panel.children.append(Div(text='<h4>Step Functions</h4>'))
-                model_input_panel.children.extend(self._build_step_widgets(sm_steps))
+                model_input_panel.children.append(
+                    Div(text='<h4>Step Functions</h4>'))
+                model_input_panel.children.extend(
+                    self._build_step_widgets(sm_steps))
             if sm_impulses:
-                model_input_panel.children.append(Div(text='<h4>Impulse Functions</h4>'))
-                model_input_panel.children.extend(self._build_impulse_widgets(sm_impulses))
+                model_input_panel.children.append(
+                    Div(text='<h4>Impulse Functions</h4>'))
+                model_input_panel.children.extend(
+                    self._build_impulse_widgets(sm_impulses)
+                )
 
-        self.model_input_panel = ScrollBox(child=model_input_panel, vertical_scrollbar='auto', width_policy='max')
+        self.model_input_panel = make_scrollable(
+            model_input_panel, vertical_scrollbar='auto', width_policy='max'
+        )
 
     def _create_run_input_panel(self):
-        run_input_panel = column(sizing_mode='stretch_both', margin=(0, 20, 0, 20))
+        run_input_panel = column(
+            sizing_mode='stretch_both', margin=(0, 20, 0, 20)
+        )
 
         run_header = Div(text='<h3>Run Configuration</h3>')
         run_params = self.model_structure['run_params']
@@ -322,10 +364,20 @@ class BokehUIGenerator:
             disabled=True,
         )
 
-        self.mode_select.js_on_change('value', CustomJS(
-            args={'reps_input': self.reps_input, 'interval_input': self.interval_input},
-            code='const is_mc = cb_obj.value === "Monte Carlo"; reps_input.disabled = !is_mc; interval_input.disabled = !is_mc;',
-        ))
+        self.mode_select.js_on_change(
+            'value',
+            CustomJS(
+                args={
+                    'reps_input': self.reps_input,
+                    'interval_input': self.interval_input,
+                },
+                code=(
+                    'const is_mc = cb_obj.value === "Monte Carlo"; '
+                    'reps_input.disabled = !is_mc; '
+                    'interval_input.disabled = !is_mc;'
+                ),
+            ),
+        )
 
         self.png_resolution_input = NumericInput(
             title='PNG Export Width (px, 1200-1920)',
@@ -348,43 +400,28 @@ class BokehUIGenerator:
             self.png_resolution_input,
         ])
 
-        self.run_input_panel = ScrollBox(child=run_input_panel, vertical_scrollbar='auto', width_policy='max')
+        self.run_input_panel = make_scrollable(
+            run_input_panel, vertical_scrollbar='auto', width_policy='max'
+        )
 
     def _create_control_panel(self):
         self.run_model_button = Button(
-            label='Run Model',
-            button_type='success',
-            width=150,
+            label='Run Model', button_type='success', width=150
         )
-
         self.reset_button = Button(
-            label='Reset',
-            button_type='warning',
-            width=150,
+            label='Reset', button_type='warning', width=150
         )
-
         self.save_inputs_button = Button(
-            label='Save Inputs',
-            button_type='primary',
-            width=150,
+            label='Save Inputs', button_type='primary', width=150
         )
-
         self.load_inputs_button = Button(
-            label='Load Inputs',
-            button_type='primary',
-            width=150,
+            label='Load Inputs', button_type='primary', width=150
         )
-
         self.save_csv_button = Button(
-            label='Save as CSV',
-            button_type='primary',
-            width=150,
+            label='Save as CSV', button_type='primary', width=150
         )
-
         self.save_png_button = Button(
-            label='Save as PNG',
-            button_type='primary',
-            width=150,
+            label='Save as PNG', button_type='primary', width=150
         )
 
         self.control_buttons = {
@@ -411,15 +448,16 @@ class BokehUIGenerator:
         self.all_outputs = all_outputs
         self.n_primary_outputs = len(outputs)
 
-        self.xaxis_formatter = CustomJSTickFormatter(code='return String(tick);')
+        self.xaxis_formatter = CustomJSTickFormatter(
+            code='return String(tick);')
 
         self.plot_figure = figure(
             title='Model Output',
             x_axis_label='Time',
             y_axis_label='Value',
-            width=800,
-            height=500,
-            sizing_mode='stretch_both',
+            width=1200 if BOKEH_2 else 800,
+            height=600 if BOKEH_2 else 500,
+            sizing_mode='fixed' if BOKEH_2 else 'stretch_both',
             tools='pan,wheel_zoom,box_zoom,reset,save',
             active_drag='pan',
             active_scroll='wheel_zoom',
@@ -440,11 +478,9 @@ class BokehUIGenerator:
             is_si = i >= len(outputs)
 
             line = self.plot_figure.line(
-                x='time',
-                y=name,
+                x='time', y=name,
                 source=self.plot_source,
-                line_width=2,
-                line_color=color,
+                line_width=2, line_color=color,
                 line_dash='dashed' if is_si else 'solid',
                 visible=not is_si,
             )
@@ -455,18 +491,15 @@ class BokehUIGenerator:
                 y1='%s_mc_p_low' % name,
                 y2='%s_mc_p_high' % name,
                 source=self.plot_source,
-                fill_color=color,
-                fill_alpha=0.33,
+                fill_color=color, fill_alpha=0.33,
                 visible=False,
             )
             self.mc_band_renderers[name] = band
 
             mc_median = self.plot_figure.line(
-                x='time',
-                y='%s_mc_median' % name,
+                x='time', y='%s_mc_median' % name,
                 source=self.plot_source,
-                line_width=2,
-                line_color=color,
+                line_width=2, line_color=color,
                 line_dash='dashed' if is_si else 'solid',
                 visible=False,
             )
@@ -474,17 +507,24 @@ class BokehUIGenerator:
 
         if all_outputs:
             legend_items = [
-                LegendItem(label=_display(name, self.display_names), renderers=[
-                    self.line_renderers[name],
-                    self.mc_mean_renderers[name],
-                    self.mc_band_renderers[name],
-                ])
+                LegendItem(
+                    label=_display(name, self.display_names),
+                    renderers=[
+                        self.line_renderers[name],
+                        self.mc_mean_renderers[name],
+                        self.mc_band_renderers[name],
+                    ],
+                )
                 for name in all_outputs
             ]
-            legend = Legend(items=legend_items, location='top_right', click_policy='mute')
-            self.plot_figure.add_layout(legend)
+            self.legend = Legend(
+                items=legend_items, location='top_right', click_policy='mute'
+            )
+            self.plot_figure.add_layout(self.legend)
 
-            display_labels = [_display(name, self.display_names) for name in all_outputs]
+            display_labels = [
+                _display(name, self.display_names) for name in all_outputs
+            ]
             self.output_checkboxes = CheckboxGroup(
                 labels=display_labels,
                 active=list(range(len(outputs))),
@@ -501,44 +541,46 @@ class BokehUIGenerator:
         self.plot_panel = column(
             self.plot_figure,
             checkbox_row,
-            sizing_mode='stretch_both',
+            sizing_mode='stretch_width' if BOKEH_2 else 'stretch_both',
         )
 
     def _create_message_panel(self):
-        message_html = self.template_loader.load_html_template('message_panel.html')
-        self.message_div = Div(text=message_html, sizing_mode='stretch_width', stylesheets=[self.css])
+        message_html = self.template_loader.load_html_template(
+            'message_panel.html')
+        self.message_div = make_div(
+            css=self.css, text=message_html, sizing_mode='stretch_width'
+        )
 
     def _create_tabs(self):
-        inputs_tab = _TabPanel(
-            child=self.model_input_panel,
-            title='Inputs',
-        )
-
-        advanced_tab = _TabPanel(
-            child=self.run_input_panel,
-            title='Advanced',
-        )
+        inputs_tab = _TabPanel(child=self.model_input_panel, title='Inputs')
+        advanced_tab = _TabPanel(child=self.run_input_panel, title='Advanced')
 
         if self.help_text:
-            help_html = '<div style="padding: 10px;">%s</div>' % self._markdown_to_html(self.help_text)
+            help_html = (
+                '<div style="padding: 10px;">%s</div>'
+                % self._markdown_to_html(self.help_text)
+            )
         else:
-            help_html = self.template_loader.load_html_template('help_content.html')
+            help_html = self.template_loader.load_html_template(
+                'help_content.html')
 
         help_content = Div(text=help_html)
-        help_content = ScrollBox(child=help_content, sizing_mode='stretch_width', width_policy='max')
-        help_tab = _TabPanel(
-            child=help_content,
-            title='Help',
+        help_content = make_scrollable(
+            help_content, sizing_mode='stretch_width', width_policy='max'
         )
+        help_tab = _TabPanel(child=help_content, title='Help')
 
-        self.tabs = Tabs(tabs=[inputs_tab, advanced_tab, help_tab], sizing_mode='stretch_both')
+        self.tabs = Tabs(
+            tabs=[inputs_tab, advanced_tab, help_tab],
+            sizing_mode='stretch_both',
+        )
 
     def _markdown_to_html(self, markdown_text: str) -> str:
         html = markdown_text
 
-        html = html.replace('### ', '<h4>').replace('\n', '</h4>\n', 1)
-        html = html.replace('## ', '<h3>').replace('\n', '</h3>\n', 1)
-        html = html.replace('# ', '<h2>').replace('\n', '</h2>\n', 1)
+        html = re.sub(r'^### (.+)$', r'<h4>\1</h4>', html, flags=re.MULTILINE)
+        html = re.sub(r'^## (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+        html = re.sub(r'^# (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
 
         html = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', html)
         html = re.sub(r'\*(.+?)\*', r'<i>\1</i>', html)

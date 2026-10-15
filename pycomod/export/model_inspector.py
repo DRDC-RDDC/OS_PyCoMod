@@ -1,18 +1,29 @@
-"""Model inspection utilities with sub-model support.
-
-Compatible with Bokeh 2.4.1 and Python 3.9.7.
-"""
+"""Inspect a built PyCoMod model and extract its structure."""
 
 import inspect
+import re
 from typing import Dict, Any, Optional, Set, List
 import numpy as np
 
-from ..elements import Pool, Parameter, Equation, Flow, Step, Impulse, VirtualBuildingBlock, Process, Delay, Time, TimeStep, Date
+from ..elements import (
+    Pool,
+    Parameter,
+    Equation,
+    Flow,
+    Step,
+    Impulse,
+    VirtualBuildingBlock,
+    Delay,
+    Time,
+    TimeStep,
+    Date,
+    Event,
+)
 from ..model import Model
 
 
 def inspect_model(model: Model) -> Dict[str, Any]:
-    """Extract model structure including sub-models, flattened into a single namespace.
+    """Extract the model structure, flattening sub-models into one namespace.
 
     Sub-model elements are prefixed with the sub-model variable name(s)
     separated by ``__``.  For example, sub-model ``m``'s pool ``P`` becomes
@@ -71,12 +82,8 @@ def inspect_model(model: Model) -> Dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Identity map: id(obj) -> qualified flat name
-# ---------------------------------------------------------------------------
-
 def _build_identity_map(model: Model, prefix: str) -> Dict[int, str]:
-    """Recursively map ``id(obj)`` to qualified flat name for every element."""
+    """Recursively map id(obj) to qualified flat name for every element."""
     result: Dict[int, str] = {}
     available = getattr(model, '_available', {})
 
@@ -98,7 +105,9 @@ def _build_identity_map(model: Model, prefix: str) -> Dict[int, str]:
     return result
 
 
-def _find_name_by_identity(element, identity_map: Dict[int, str]) -> Optional[str]:
+def _find_name_by_identity(
+    element, identity_map: Dict[int, str]
+) -> Optional[str]:
     if element is None:
         return None
     if isinstance(element, VirtualBuildingBlock):
@@ -109,10 +118,6 @@ def _find_name_by_identity(element, identity_map: Dict[int, str]) -> Optional[st
                 return name
     return identity_map.get(id(element))
 
-
-# ---------------------------------------------------------------------------
-# Recursive element collection
-# ---------------------------------------------------------------------------
 
 def _collect_elements_recursive(
     model: Model,
@@ -180,12 +185,7 @@ def _collect_elements_recursive(
                 display_names[flat] = dotted
 
 
-# ---------------------------------------------------------------------------
-# Output flattening
-# ---------------------------------------------------------------------------
-
 def _flatten_outputs(model: Model, prefix: str) -> List[str]:
-    """Expand sub-model entries in the output list into flat element names."""
     available = getattr(model, '_available', {})
     result: List[str] = []
 
@@ -199,10 +199,6 @@ def _flatten_outputs(model: Model, prefix: str) -> List[str]:
 
     return result
 
-
-# ---------------------------------------------------------------------------
-# Entry builders (unchanged signatures)
-# ---------------------------------------------------------------------------
 
 def _make_pool_entry(name, init_value, obj):
     entry = _make_entry(name, init_value)
@@ -225,7 +221,7 @@ def _get_closure_vars(func):
     if func.__closure__ is None:
         return {}
     return dict(zip(func.__code__.co_freevars,
-                     [c.cell_contents for c in func.__closure__]))
+                    [c.cell_contents for c in func.__closure__]))
 
 
 def _resolve_array(val):
@@ -268,12 +264,11 @@ def _make_impulse_entry(name, obj):
 
 def _make_equation_entry(name, obj, eq_type):
     func = obj.eq_func
-    func_info = _extract_func_info(func)
     return {
         'name': name,
         'type': eq_type,
         'init_value': getattr(obj, 'init_value', 0),
-        'func_info': func_info,
+        'func_info': _extract_func_info(func),
     }
 
 
@@ -290,6 +285,15 @@ def _make_flow_entry(name, obj, identity_map):
         except Exception:
             pass
 
+    when_info = None
+    when_func = getattr(obj, 'when', None)
+    if when_func is not None:
+        when_info = _extract_func_info(when_func)
+
+    limit_value = getattr(obj, 'limit', None)
+    if limit_value is not None:
+        limit_value = _safe_scalar(limit_value)
+
     return {
         'name': name,
         'rate_func': func_info,
@@ -298,6 +302,8 @@ def _make_flow_entry(name, obj, identity_map):
         'discrete': getattr(obj, 'discrete', False),
         'stochastic': getattr(obj, 'stochastic', False),
         'variance_value': variance_value,
+        'when': when_info,
+        'limit': limit_value,
     }
 
 
@@ -327,24 +333,25 @@ def _get_value_type(value):
 
 
 def _safe_scalar(val):
-    if isinstance(val, (np.integer,)):
+    if isinstance(val, np.integer):
         return int(val)
-    elif isinstance(val, (np.floating,)):
+    elif isinstance(val, np.floating):
         return float(val)
     return val
 
 
-# ---------------------------------------------------------------------------
-# Process collection
-# ---------------------------------------------------------------------------
-
 def _collect_processes(model: Model, prefix: str) -> Dict[str, Any]:
-    """Extract process definitions from a model and its sub-models."""
     processes: Dict[str, Any] = {}
 
     for i, proc in enumerate(getattr(model, '_processes', [])):
         name = getattr(proc.routine, '__name__', 'proc_%d' % i)
         flat = (prefix + '__' + name) if prefix else name
+
+        source = None
+        try:
+            source = inspect.getsource(proc.routine).strip()
+        except (OSError, TypeError):
+            pass
 
         start_type = None
         start_value = None
@@ -358,17 +365,24 @@ def _collect_processes(model: Model, prefix: str) -> Dict[str, Any]:
             elif isinstance(proc.start, TimeStep):
                 start_type = 'timestep'
                 start_value = proc.start.steps
-
-        source = None
-        try:
-            source = inspect.getsource(proc.routine).strip()
-        except (OSError, TypeError):
-            pass
+            elif isinstance(proc.start, Date):
+                start_type = 'date'
+                start_value = str(proc.start.date)
+            elif isinstance(proc.start, Event):
+                if source:
+                    cond_match = re.search(
+                        r'start\s*=\s*self\.wait_condition\s*\((.+?)\)\s*\)',
+                        source)
+                    if cond_match:
+                        start_type = 'condition'
+                        start_value = cond_match.group(1).strip()
 
         processes[flat] = {
             'name': flat,
             'start_type': start_type,
-            'start_value': _safe_scalar(start_value) if start_value is not None else None,
+            'start_value': (
+                _safe_scalar(start_value) if start_value is not None else None
+            ),
             'priority': proc.priority,
             'source': source,
         }
@@ -381,7 +395,6 @@ def _collect_processes(model: Model, prefix: str) -> Dict[str, Any]:
 
 
 def _iter_submodels(model: Model):
-    """Yield (name, sub_model) pairs from a model's _available dict."""
     available = getattr(model, '_available', {})
     for name, obj in available.items():
         if isinstance(obj, Model):
