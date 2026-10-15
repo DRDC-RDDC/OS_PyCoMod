@@ -123,7 +123,7 @@ class TestExportToHtmlIntegration:
         )
         content = Path(output).read_text(encoding='utf-8')
         assert 'new Process' in content
-        assert 'function*' in content
+        assert 'function * (' in content
 
     def test_minimal_model_export(self, minimal_model, tmp_path):
         output = export_to_html(

@@ -143,7 +143,7 @@ def attend(n):
         result = process_translator.translate_process(source)
         assert result['success'] is True
         js = result['javascript']
-        assert 'function*' in js
+        assert 'function * (' in js
         assert 'yield' in js
         assert 'wait_delay' in js
         assert '-=' in js
@@ -240,7 +240,7 @@ def proc():
 def proc():
     return
 """)
-        assert r1['success'] and 'return;' in r1['javascript']
+        assert r1['success'] and '\n  return\n' in r1['javascript']
 
         r2 = process_translator.translate_process("""
 def proc():
@@ -251,8 +251,8 @@ def proc():
         continue
 """)
         assert r2['success']
-        assert 'break;' in r2['javascript']
-        assert 'continue;' in r2['javascript']
+        assert '  break' in r2['javascript']
+        assert '  continue' in r2['javascript']
 
     def test_boolean_and_ternary(self, process_translator):
         result = process_translator.translate_process("""
@@ -284,7 +284,7 @@ def proc():
 def attend(n):
     yield self.wait_delay(5)
 """)
-        assert r1['success'] and 'function*' in r1['javascript']
+        assert r1['success'] and 'function * (' in r1['javascript']
 
         r2 = process_translator.translate_process(
             """@self.process(start=self.wait_time(2))
@@ -292,7 +292,7 @@ def scheduler():
     yield self.wait_delay(10)
 """
         )
-        assert r2['success'] and 'function*' in r2['javascript']
+        assert r2['success'] and 'function * (' in r2['javascript']
 
     def test_element_and_sim_references(self, process_translator):
         result = process_translator.translate_process("""

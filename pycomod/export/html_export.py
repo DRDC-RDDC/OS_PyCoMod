@@ -178,7 +178,7 @@ def _build_header_html(title: str) -> str:
                 {drdc}
             </div>
         </div>
-        """
+"""
     )
 
 

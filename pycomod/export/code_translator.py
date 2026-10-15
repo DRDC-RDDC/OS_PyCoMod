@@ -317,20 +317,25 @@ class _ProcessJSVisitor:
         for stmt in node.body:
             body_lines.extend(self._visit_stmt(stmt, indent=1))
         body = '\n'.join(body_lines)
-        return 'function*(%s) {\n%s\n}' % (', '.join(params), body)
+        return 'function * (%s) {\n%s\n}' % (', '.join(params), body)
 
     def _indent(self, level: int) -> str:
-        return '    ' * level
+        return '  ' * level
 
     def _visit_stmt(self, node, indent: int) -> List[str]:
+        # Output follows StandardJS: 2-space indent and no semicolons.
         if isinstance(node, ast.Expr):
             expr_js = self._visit_expr(node.value)
             if isinstance(node.value, ast.Yield):
                 return [
-                    '%syield %s;'
-                    % (self._indent(indent), self._yield_value(node.value))
+                    ('%syield %s'
+                     % (self._indent(indent), self._yield_value(node.value))
+                     ).rstrip()
                 ]
-            return ['%s%s;' % (self._indent(indent), expr_js)]
+            # A statement starting with ( or [ needs a leading ; without
+            # semicolons, or it would continue the previous line.
+            lead = ';' if expr_js[:1] in '([`' else ''
+            return ['%s%s%s' % (self._indent(indent), lead, expr_js)]
 
         elif isinstance(node, ast.Assign):
             targets = [self._visit_expr(t) for t in node.targets]
@@ -338,12 +343,13 @@ class _ProcessJSVisitor:
             if isinstance(node.value, ast.Yield):
                 tgt = targets[0]
                 decl = 'let ' if "elements[" not in tgt else ''
-                return ['%s%s%s = yield %s;' % (self._indent(
-                    indent), decl, tgt, self._yield_value(node.value))]
+                return [('%s%s%s = yield %s' % (
+                    self._indent(indent), decl, tgt,
+                    self._yield_value(node.value))).rstrip()]
             lines = []
             for t in targets:
                 lines.append(
-                    '%slet %s = %s;' % (self._indent(indent), t, value)
+                    '%slet %s = %s' % (self._indent(indent), t, value)
                 )
             return lines
 
@@ -351,13 +357,13 @@ class _ProcessJSVisitor:
             target = self._visit_expr(node.target)
             value = self._visit_expr(node.value)
             op = self._binop_symbol(node.op)
-            return ['%s%s %s= %s;' % (self._indent(indent), target, op, value)]
+            return ['%s%s %s= %s' % (self._indent(indent), target, op, value)]
 
         elif isinstance(node, ast.Return):
             if node.value is None:
-                return ['%sreturn;' % self._indent(indent)]
+                return ['%sreturn' % self._indent(indent)]
             return [
-                '%sreturn %s;'
+                '%sreturn %s'
                 % (self._indent(indent), self._visit_expr(node.value))
             ]
 
@@ -405,10 +411,10 @@ class _ProcessJSVisitor:
             return lines
 
         elif isinstance(node, ast.Break):
-            return ['%sbreak;' % self._indent(indent)]
+            return ['%sbreak' % self._indent(indent)]
 
         elif isinstance(node, ast.Continue):
-            return ['%scontinue;' % self._indent(indent)]
+            return ['%scontinue' % self._indent(indent)]
 
         elif isinstance(node, ast.Pass):
             return []

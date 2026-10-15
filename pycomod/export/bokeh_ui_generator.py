@@ -372,9 +372,9 @@ class BokehUIGenerator:
                     'interval_input': self.interval_input,
                 },
                 code=(
-                    'const is_mc = cb_obj.value === "Monte Carlo"; '
-                    'reps_input.disabled = !is_mc; '
-                    'interval_input.disabled = !is_mc;'
+                    "const is_mc = cb_obj.value === 'Monte Carlo'\n"
+                    'reps_input.disabled = !is_mc\n'
+                    'interval_input.disabled = !is_mc\n'
                 ),
             ),
         )
@@ -449,7 +449,7 @@ class BokehUIGenerator:
         self.n_primary_outputs = len(outputs)
 
         self.xaxis_formatter = CustomJSTickFormatter(
-            code='return String(tick);')
+            code='return String(tick)')
 
         self.plot_figure = figure(
             title='Model Output',

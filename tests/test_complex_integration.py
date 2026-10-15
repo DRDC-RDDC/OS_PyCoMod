@@ -298,18 +298,18 @@ class TestComplexJSEngine:
         assert isinstance(engine, str) and len(engine) > 5000
 
         for name in ['regionA__sir__S', 'regionA__sir__I', 'regionB__sir__S']:
-            assert "elements['%s']" % name in engine
+            assert "elements.%s" % name in engine
         for name in ['migration', 'regionA__treat_rate', 'regionA__sir__g']:
-            assert "elements['%s']" % name in engine
+            assert "elements.%s" % name in engine
 
         assert 'new Step' in engine
         assert 'new Impulse' in engine
-        assert "elements['F_AB']" in engine
+        assert "elements.F_AB" in engine
 
     def test_engine_infrastructure(self, engine):
         for expected in ('run_simulation', 'PyCoModSimulation', 'class Pool',
                          'class Flow', 'class Process', 'new Process',
-                         'function*', 'processes.push', 'new Time(3)'):
+                         'function * (', 'processes.push', 'new Time(3)'):
             assert expected in engine
 
 

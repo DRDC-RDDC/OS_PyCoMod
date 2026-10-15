@@ -1,5 +1,6 @@
 """Generates JavaScript simulation engine code for browser execution."""
 
+import re
 from typing import Dict, Any
 from .template_loader import get_loader
 from .code_translator import CodeTranslator
@@ -25,7 +26,7 @@ class JavaScriptSimulationEngine:
             self.template_loader.load_js_template('simulation_loop.js'),
             self.template_loader.load_js_template('public_api.js'),
         ]
-        return '\n\n'.join(js_parts)
+        return '\n\n'.join(p.strip('\n') for p in js_parts) + '\n'
 
     def _generate_element_initialization(self) -> str:
         pools = self.model_structure['pools']
@@ -38,8 +39,8 @@ class JavaScriptSimulationEngine:
             init_val = info['init_value']
             allow_neg = info.get('allow_negative', False)
             pool_init.append(
-                "    elements['%s'] = new Pool('%s', "
-                "inputs['%s'] !== undefined ? inputs['%s'] : %s, %s);"
+                "elements['%s'] = new Pool('%s', "
+                "inputs['%s'] !== undefined ? inputs['%s'] : %s, %s)"
                 % (name, name, name, name, init_val, str(allow_neg).lower())
             )
 
@@ -47,8 +48,8 @@ class JavaScriptSimulationEngine:
         for name, info in parameters.items():
             init_val = info['init_value']
             param_init.append(
-                "    elements['%s'] = new Parameter('%s', "
-                "inputs['%s'] !== undefined ? inputs['%s'] : %s);"
+                "elements['%s'] = new Parameter('%s', "
+                "inputs['%s'] !== undefined ? inputs['%s'] : %s)"
                 % (name, name, name, name, init_val)
             )
 
@@ -62,11 +63,11 @@ class JavaScriptSimulationEngine:
                 default_times = info['times']
                 default_default = info['default']
                 eq_init.append(
-                    "    elements['%s'] = new Step('%s', "
+                    "elements['%s'] = new Step('%s', "
                     "_parse_csv(inputs['%s_values'], %s), "
                     "_parse_csv(inputs['%s_times'], %s), "
                     "inputs['%s_default'] !== undefined "
-                    "? inputs['%s_default'] : %s);"
+                    "? inputs['%s_default'] : %s)"
                     % (
                         name,
                         name,
@@ -83,9 +84,9 @@ class JavaScriptSimulationEngine:
                 default_vals = info['values']
                 default_times = info['times']
                 eq_init.append(
-                    "    elements['%s'] = new Impulse('%s', "
+                    "elements['%s'] = new Impulse('%s', "
                     "_parse_csv(inputs['%s_values'], %s), "
-                    "_parse_csv(inputs['%s_times'], %s));"
+                    "_parse_csv(inputs['%s_times'], %s))"
                     % (name, name,
                        name, default_vals,
                        name, default_times)
@@ -93,7 +94,7 @@ class JavaScriptSimulationEngine:
             elif eq_type == 'equation':
                 js_expr = self.translated_code.get(name, '0')
                 eq_init.append(
-                    "    elements['%s'] = new Equation('%s', %s, () => %s);"
+                    "elements['%s'] = new Equation('%s', %s, () => %s)"
                     % (name, name, init_val, js_expr)
                 )
 
@@ -120,8 +121,8 @@ class JavaScriptSimulationEngine:
             limit_js = str(limit_value) if limit_value is not None else 'null'
 
             flow_init.append(
-                "    elements['%s'] = new Flow('%s', () => %s, "
-                "%s, %s, %s, %s, %s, %s, %s);"
+                "elements['%s'] = new Flow('%s', () => %s, "
+                "%s, %s, %s, %s, %s, %s, %s)"
                 % (
                     name,
                     name,
@@ -138,16 +139,21 @@ class JavaScriptSimulationEngine:
 
         process_init = self._generate_process_initialization()
 
-        return self.template_loader.render_js_template(
+        # Generated lines sit under a 2-space-indented placeholder.
+        def block(lines):
+            return '\n  '.join('\n'.join(lines).split('\n'))
+
+        rendered = self.template_loader.render_js_template(
             'element_initialization.js',
             {
-                'POOL_INITIALIZATION': '\n'.join(pool_init),
-                'PARAMETER_INITIALIZATION': '\n'.join(param_init),
-                'EQUATION_INITIALIZATION': '\n'.join(eq_init),
-                'FLOW_INITIALIZATION': '\n'.join(flow_init),
-                'PROCESS_INITIALIZATION': '\n'.join(process_init),
+                'POOL_INITIALIZATION': block(pool_init),
+                'PARAMETER_INITIALIZATION': block(param_init),
+                'EQUATION_INITIALIZATION': block(eq_init),
+                'FLOW_INITIALIZATION': block(flow_init),
+                'PROCESS_INITIALIZATION': block(process_init),
             }
         )
+        return _standard_style(rendered)
 
     def _translate_condition_start(self, cond_source, process_name):
         prefix = '__'.join(process_name.split('__')[:-1])
@@ -185,27 +191,25 @@ class JavaScriptSimulationEngine:
                 continue
             priority = info.get('priority', 0)
 
-            # Re-indent continuation lines so the body aligns under the const
-            # assignment
-            js_lines = js_body.splitlines()
-            if len(js_lines) > 1:
-                indented = js_lines[0]
-                for jl in js_lines[1:]:
-                    indented += '\n    ' + jl
-                js_body = indented
-
+            lines.append("const %s_routine = %s" % (name, js_body))
             lines.append(
-                "    const %s_routine = %s;" % (name, js_body)
-            )
-            lines.append(
-                "    const %s = new Process(%s_routine, "
-                "{ start: %s, priority: %s, parent: sim_context });"
+                "const %s = new Process(%s_routine, "
+                "{ start: %s, priority: %s, parent: sim_context })"
                 % (name, name, start_js, priority)
             )
-            lines.append("    processes.push(%s);" % name)
+            lines.append("processes.push(%s)" % name)
             lines.append("")
 
         return lines
+
+
+def _standard_style(js: str) -> str:
+    """Tidy generated JS for StandardJS: dot notation, no extra blank lines."""
+    js = re.sub(r"\b(elements|inputs)\['([A-Za-z_$][\w$]*)'\]", r"\1.\2", js)
+    js = '\n'.join(line.rstrip() for line in js.split('\n'))
+    js = re.sub(r'\n{3,}', '\n\n', js)
+    js = re.sub(r'\{\n\n', '{\n', js)
+    return re.sub(r'\n\n(\s*\})', r'\n\1', js)
 
 
 def generate_js_engine(model_structure: Dict[str, Any],

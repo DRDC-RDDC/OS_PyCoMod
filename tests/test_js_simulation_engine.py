@@ -50,9 +50,9 @@ class TestGenerateEngineSimpleSIR:
 
     def test_engine_element_initialization(self, simple_sir):
         engine, _ = _generate(simple_sir)
-        for el in ("elements['S']", "elements['I']", "elements['R']",
-                   "elements['b']", "elements['g']", "elements['N']",
-                   "elements['Fsi']", "elements['Fir']"):
+        for el in ("elements.S", "elements.I", "elements.R",
+                   "elements.b", "elements.g", "elements.N",
+                   "elements.Fsi", "elements.Fir"):
             assert el in engine
         for constructor in ('new Pool', 'new Parameter',
                             'new Equation', 'new Flow'):
@@ -77,10 +77,10 @@ class TestGenerateEngineSubmodels:
 
     def test_submodel_and_cross_model_elements(self, two_region_sir):
         engine, _ = _generate(two_region_sir)
-        assert "elements['r1__S']" in engine
-        assert "elements['r2__S']" in engine
-        assert "elements['migration_rate']" in engine
-        assert "elements['F_r1_to_r2']" in engine
+        assert "elements.r1__S" in engine
+        assert "elements.r2__S" in engine
+        assert "elements.migration_rate" in engine
+        assert "elements.F_r1_to_r2" in engine
 
 
 class TestGenerateEngineProcesses:
@@ -104,7 +104,7 @@ class TestGenerateEngineProcesses:
 
         engine = generate_js_engine(structure, translated)
         assert 'new Process' in engine
-        assert 'function*' in engine
+        assert 'function * (' in engine
         assert 'processes.push' in engine
         assert 'new Time(2)' in engine
 
@@ -125,7 +125,7 @@ class TestGenerateEngineMinimal:
     def test_flow_with_no_dest(self, minimal_model):
         engine, _ = _generate(minimal_model)
         assert 'null' in engine
-        assert "elements['Fx']" in engine
+        assert "elements.Fx" in engine
 
 
 class TestGenerateEngineWaitTypes:
