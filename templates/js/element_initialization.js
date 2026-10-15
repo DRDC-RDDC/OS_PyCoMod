@@ -1,30 +1,22 @@
-// ============================================================================
-// Model Element Initialization
-// ============================================================================
+function initialize_elements (inputs) {
+  const elements = {}
 
-function initialize_elements(inputs) {
-    const elements = {};
+  {{POOL_INITIALIZATION}}
 
-    // Initialize pools
-{{POOL_INITIALIZATION}}
+  {{PARAMETER_INITIALIZATION}}
 
-    // Initialize parameters
-{{PARAMETER_INITIALIZATION}}
+  {{EQUATION_INITIALIZATION}}
 
-    // Initialize equations
-{{EQUATION_INITIALIZATION}}
+  {{FLOW_INITIALIZATION}}
 
-    // Initialize flows
-{{FLOW_INITIALIZATION}}
-
-    return elements;
+  return elements
 }
 
-function initialize_processes(sim_context) {
-    const elements = sim_context.elements;
-    const processes = [];
+function initialize_processes (sim_context) {
+  const elements = sim_context.elements
+  const processes = []
 
-{{PROCESS_INITIALIZATION}}
+  {{PROCESS_INITIALIZATION}}
 
-    return processes;
+  return processes
 }
