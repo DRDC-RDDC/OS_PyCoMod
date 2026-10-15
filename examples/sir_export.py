@@ -8,8 +8,11 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 class SimpleSIR(pcm.Model):
+    """Basic SIR disease model."""
+
     def build(self):
         # Pools
+        """Define the model elements."""
         S = self.pool(95)
         I = self.pool(5)
         R = self.pool(0)

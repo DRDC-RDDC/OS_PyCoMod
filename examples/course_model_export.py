@@ -6,39 +6,48 @@ import pycomod as pcm
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-class CourseModel(pcm.Model):
-    def build(self):
-        # Pools
-        W = self.pool(100)     # Waitlist
-        C = self.pool(0)       # In course
-        P = self.pool(0)       # Passed
-        F = self.pool(0)       # Failed
+class Course(pcm.Model):
+    """Course scheduling model with waitlist, pass and fail pools."""
 
-        # Parameters
-        duration = self.parameter(5)
-        passRate = self.parameter(0.8)
-        maxLoad = self.parameter(30)
-        minLoad = self.parameter(10)
-        startInt = self.parameter(10)
+    def build(self, minLoad=12, maxLoad=18, startTime=30,
+              startInt=60, duration=40, passRate=0.8):
+        """Define the model elements."""
+        W = self.pool(0, name='W')  # waitlist
+        C = self.pool(0, name='C')  # on course
+        P = self.pool(0, name='P')  # pass
+        F = self.pool(0, name='F')  # fail
 
-        # Process: run a single course session
+        minLoad = self.parameter(minLoad)
+        maxLoad = self.parameter(maxLoad)
+        startInt = self.parameter(startInt)
+        duration = self.parameter(duration)
+        passRate = self.parameter(passRate)
+
+        @self.process(start=self.wait_time(0))
+        def enter():
+            while True:
+                W.add(8)
+                yield self.wait_delay(31)
+
         @self.process
-        def attend(n):
+        def attend_serial(n):
             W.remove(n)
             C.add(n)
             yield self.wait_delay(duration)
             C.remove(n)
-            np_val = round(n * passRate)
-            P.add(np_val)
-            F.add(n - np_val)
 
-        # Process: schedule courses periodically
-        @self.process(start=self.wait_time(2))
-        def scheduler():
+            np = round(n * passRate)
+
+            P.add(np)
+            F.add(n - np)
+
+        @self.process(start=self.wait_time(startTime))
+        def start():
             while True:
                 if W >= minLoad:
                     n = min(int(W), maxLoad)
-                    attend(n).start()
+                    attend_serial(n).start()
+
                 yield self.wait_delay(startInt)
 
         self.set_available(locals(), output=(W, C, P, F))
@@ -52,33 +61,46 @@ a course system driven by **discrete event processes**.
 
 ## Pools
 
-- **W (Waitlist)**: Students waiting for a course to start
-- **C (In Course)**: Students currently attending a course
-- **P (Passed)**: Students who completed the course successfully
-- **F (Failed)**: Students who did not pass
+- **W (Waitlist)**: Students waiting for a course to start (starts at 0)
+- **C (On Course)**: Students currently attending a course
+- **P (Pass)**: Students who completed the course successfully
+- **F (Fail)**: Students who did not pass
 
-## Parameters
+## Processes
 
-- **duration**: Length of each course session (time units)
-- **passRate**: Fraction of students who pass (0–1)
-- **maxLoad**: Maximum class size per session
-- **minLoad**: Minimum students required to start a session
-- **startInt**: Interval between scheduling checks
+- **enter**: Adds 8 students to the waitlist every 31 time units
+  (starts at time 0)
+- **attend_serial**: Removes students from the waitlist, holds them in course
+  for **duration** time units, then distributes them between pass and fail
+  based on **passRate**
+- **start**: Checks every **startInt** time units whether the waitlist has at
+  least **minLoad** students, and if so starts an **attend_serial** session
+  (starts at time **startTime**)
+
+## Build Parameters
+
+- **minLoad** (12): Minimum students required to start a session
+- **maxLoad** (18): Maximum class size per session
+- **startTime** (30): Time at which the start process begins
+- **startInt** (60): Interval between scheduling checks
+- **duration** (40): Length of each course session (time units)
+- **passRate** (0.8): Fraction of students who pass (0-1)
 
 ## How It Works
 
-The **scheduler** process starts at time 2 and checks every **startInt**
+The **enter** process continuously adds students to the waitlist. The
+**start** process begins at time **startTime** and checks every **startInt**
 time units whether the waitlist has at least **minLoad** students. If so,
-it starts an **attend** session that removes students from the waitlist,
-holds them in course for **duration** time units, then distributes them
-between passed and failed based on **passRate**.
+it starts an **attend_serial** session that moves up to **maxLoad** students
+into the course, holds them for **duration** time units, then splits them
+between pass and fail based on **passRate**.
 
-Multiple course sessions can run concurrently — each is an independent
+Multiple course sessions can run concurrently - each is an independent
 process on the event queue.
 """
 
 if __name__ == "__main__":
-    model = CourseModel()
+    model = Course()
     output = pcm.export_to_html(
         model=model,
         filename="course_model.html",

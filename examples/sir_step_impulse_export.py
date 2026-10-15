@@ -7,8 +7,11 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 class SIRWithInterventions(pcm.Model):
+    """SIR model with a step intervention and an impulse."""
+
     def build(self):
         # Pools
+        """Define the model elements."""
         S = self.pool(950)
         I = self.pool(50)
         R = self.pool(0)

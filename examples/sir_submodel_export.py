@@ -7,16 +7,20 @@ regions) connected by a migration flow.
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+)
 
-import pycomod as pcm
+import pycomod as pcm  # noqa: E402
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 class SIR(pcm.Model):
     """Basic SIR compartment model."""
+
     def build(self, s0=950, i0=50, r0=0):
+        """Define the model elements."""
         S = self.pool(s0)
         I = self.pool(i0)
         R = self.pool(r0)
@@ -34,13 +38,17 @@ class SIR(pcm.Model):
 
 class TwoRegionModel(pcm.Model):
     """Two SIR regions with inter-region migration."""
+
     def build(self):
+        """Define the model elements."""
         r1 = self.submodel(SIR(950, 50, 0))
         r2 = self.submodel(SIR(950, 50, 0))
 
         migration_rate = self.parameter(0.01)
 
-        F_r1_to_r2 = self.flow(lambda: migration_rate * r1.I, src=r1.I, dest=r2.I)
+        F_r1_to_r2 = self.flow(
+            lambda: migration_rate * r1.I, src=r1.I, dest=r2.I
+        )
 
         self.set_available(locals(), output=(r1, r2))
 

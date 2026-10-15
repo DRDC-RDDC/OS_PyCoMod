@@ -9,16 +9,20 @@ flows.
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+)
 
-import pycomod as pcm
+import pycomod as pcm  # noqa: E402
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 class SIR(pcm.Model):
     """Basic SIR compartment model."""
+
     def build(self, s0=95, i0=5, r0=0):
+        """Define the model elements."""
         S = self.pool(s0)
         I = self.pool(i0)
         R = self.pool(r0)
@@ -36,7 +40,9 @@ class SIR(pcm.Model):
 
 class MixSIR(pcm.Model):
     """Two SIR groups with cross-infection between them."""
+
     def build(self):
+        """Define the model elements."""
         GrpA = self.submodel(SIR(95, 5, 0))
         GrpB = self.submodel(SIR(90, 10, 0))
 
