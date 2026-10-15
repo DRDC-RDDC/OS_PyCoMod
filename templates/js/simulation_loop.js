@@ -1,3 +1,14 @@
+/**
+ * @file Single and Monte Carlo simulation runs, mirroring Python _run/_run_mc.
+ */
+
+/**
+ * Run one replication (mirrors Python _run).
+ * @param {Object} inputs - Input widget values by element name.
+ * @param {Object} run_params - t_end, dt, date, tunit, outputs.
+ * @param {boolean} [stochastic_enabled] - Apply stochastic noise.
+ * @returns {{time: number[], elements: Object, outputs: Object}}
+ */
 function run_simulation (inputs, run_params, stochastic_enabled) {
   const elements = initialize_elements(inputs)
   PyCoMod.elements = elements
@@ -92,6 +103,12 @@ function run_simulation (inputs, run_params, stochastic_enabled) {
   }
 }
 
+/**
+ * Return the value history of each requested output.
+ * @param {Object} elements
+ * @param {string[]} output_names
+ * @returns {Object}
+ */
 function extract_outputs (elements, output_names) {
   const outputs = {}
 
@@ -110,6 +127,12 @@ function extract_outputs (elements, output_names) {
   return outputs
 }
 
+/**
+ * Run several replications and summarise them (mirrors Python _run_mc).
+ * @param {Object} inputs
+ * @param {Object} run_params - Also reps, interval.
+ * @returns {{time: number[], mc_outputs: Object}}
+ */
 function run_simulation_mc (inputs, run_params) {
   const reps = run_params.reps || 100
   const interval = run_params.interval || 90
@@ -141,6 +164,12 @@ function run_simulation_mc (inputs, run_params) {
   return { time: time_hist, mc_outputs }
 }
 
+/**
+ * Linear-interpolated percentile of sorted values.
+ * @param {number[]} sorted_values
+ * @param {number} pct - 0 to 100.
+ * @returns {number}
+ */
 function _percentile (sorted_values, pct) {
   const n = sorted_values.length
   if (n === 0) return 0
@@ -151,6 +180,12 @@ function _percentile (sorted_values, pct) {
   return sorted_values[lo] + (idx - lo) * (sorted_values[hi] - sorted_values[lo])
 }
 
+/**
+ * Median and percentile band at each time step.
+ * @param {number[][]} runs - One history per replication.
+ * @param {number} interval - Band width in percent (50 = 25th-75th).
+ * @returns {{median: number[], p_low: number[], p_high: number[]}}
+ */
 function _compute_statistics (runs, interval) {
   if (!runs || runs.length === 0) {
     return { median: [], p_low: [], p_high: [] }

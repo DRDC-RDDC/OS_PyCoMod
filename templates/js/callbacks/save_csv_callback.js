@@ -1,3 +1,8 @@
+/**
+ * @file Save as CSV button: saves time, date and output columns.
+ * Bokeh args: plot_source, date/time settings, message_div.
+ */
+
 try {
   const data = plot_source.data
   const time = data.time || []

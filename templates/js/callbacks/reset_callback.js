@@ -1,3 +1,8 @@
+/**
+ * @file Reset button: restores default inputs and clears the plot.
+ * Bokeh args: input widgets, run settings, plot_source, renderers.
+ */
+
 try {
   {{INPUT_RESETS}}
 

@@ -1,3 +1,8 @@
+/**
+ * @file Load Inputs button: loads inputs from a JSON file.
+ * Bokeh args: input widgets, run settings, message_div.
+ */
+
 try {
   const input = document.createElement('input')
   input.type = 'file'

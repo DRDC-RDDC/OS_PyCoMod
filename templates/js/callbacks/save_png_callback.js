@@ -1,3 +1,8 @@
+/**
+ * @file Save as PNG button: saves the plot at the chosen width.
+ * Bokeh args: png_resolution_input, message_div.
+ */
+
 try {
   let src_canvas = null
 

@@ -1,3 +1,8 @@
+/**
+ * @file Run Model button: runs the simulation and updates the plot.
+ * Bokeh args: input widgets, run settings, plot_source, renderers.
+ */
+
 try {
   const mode = mode_select.value
 
@@ -64,10 +69,10 @@ try {
   }
   if (xaxis_formatter && plot_figure && plot_figure.below && plot_figure.below[0]) {
     if (use_dates) {
-      xaxis_formatter.code = 'const d = new Date(tick); return d.toISOString().slice(0, 10);'
+      xaxis_formatter.code = 'return new Date(tick).toISOString().slice(0, 10)'
       plot_figure.below[0].axis_label = 'Date'
     } else {
-      xaxis_formatter.code = 'return String(tick);'
+      xaxis_formatter.code = 'return String(tick)'
       plot_figure.below[0].axis_label = 'Time (' + tunit_select.value.toLowerCase() + ')'
     }
   }

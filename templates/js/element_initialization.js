@@ -1,3 +1,12 @@
+/**
+ * @file Model-specific element and process creation (filled in by Python).
+ */
+
+/**
+ * Create the model elements using the current inputs.
+ * @param {Object} inputs
+ * @returns {Object} Elements by name.
+ */
 function initialize_elements (inputs) {
   const elements = {}
 
@@ -12,6 +21,11 @@ function initialize_elements (inputs) {
   return elements
 }
 
+/**
+ * Create the model processes.
+ * @param {Object} sim_context
+ * @returns {Process[]}
+ */
 function initialize_processes (sim_context) {
   const elements = sim_context.elements
   const processes = []
