@@ -3,6 +3,7 @@
 import pytest
 from pycomod.export.model_inspector import inspect_model
 from pycomod.export.code_translator import CodeTranslator
+from pycomod.export.html_export import translate_structure
 from pycomod.export.js_simulation_engine import (
     JavaScriptSimulationEngine, generate_js_engine,
 )
@@ -146,3 +147,40 @@ class TestGenerateEngineWaitTypes:
         engine, _ = _generate(wait_types_model)
         assert 'messages' in engine
         assert 'MessageWait' in engine
+
+
+class TestGenerateEngineFeatureModel:
+    """Flow variants, sub-processes and Monte Carlo statistics."""
+
+    @staticmethod
+    def _engine(model):
+        structure = inspect_model(model)
+        return generate_js_engine(structure, translate_structure(structure))
+
+    def test_flow_variants(self, feature_model):
+        engine = self._engine(feature_model)
+        assert "new Pool('leak__P'" in engine
+        assert "new Pool('N', inputs.N !== undefined ? inputs.N : 0, true)" \
+            in engine
+        # discrete flow from the integer pool into the connected Sink pool
+        assert 'elements.leak__P, elements.Sink, true' in engine
+        assert ', 0.5, null, null)' in engine                       # variance
+        assert '() => sim_context.sim_time <= 5, null)' in engine   # when
+        assert ', null, 3)' in engine                                # limit
+
+    def test_sub_processes(self, feature_model):
+        engine = self._engine(feature_model)
+        assert 'yield sub.call(1)' in engine
+        assert 'sub.call(2).start()' in engine
+        assert 'sub.call(3).start(wait_delay(1))' in engine
+
+    def test_monte_carlo(self, feature_model, run_js):
+        engine = self._engine(feature_model)
+        out = run_js(engine + (
+            "\nconst r = run_simulation_mc({}, {t_end: 10, dt: 1, reps: 20,"
+            " interval: 50, outputs: ['A']})"
+            "\nconsole.log(JSON.stringify(r.mc_outputs.A))"))
+        assert len(out['median']) == 11
+        assert all(lo <= m <= hi for lo, m, hi in
+                   zip(out['p_low'], out['median'], out['p_high']))
+        assert out['p_high'][-1] > out['p_low'][-1]  # stochastic spread

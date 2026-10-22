@@ -2,6 +2,8 @@
 
 import pytest
 from pycomod.export.code_translator import CodeTranslator
+from pycomod.export.model_inspector import inspect_model
+from pycomod.export.html_export import translate_structure
 
 
 @pytest.fixture
@@ -436,3 +438,18 @@ def proc():
     yield self.wait_sequence(self.wait_delay(3), self.wait_delay(4))
 """)
         assert r['success'] and 'wait_sequence(' in r['javascript']
+
+
+class TestFeatureModelTranslation:
+    """Integer pool, discrete flow, when guard and sub-process forms."""
+
+    def test_feature_model(self, feature_model):
+        structure = inspect_model(feature_model)
+        code = translate_structure(structure)
+        # Rate of the discrete flow out of the integer pool leak.P
+        assert code['leak__F'] == "elements['leak__P'].value * 0.25"
+        assert code['f_when__when'] == 'sim_context.sim_time <= 5'
+        main = structure['processes']['main']['js_body']
+        assert 'yield sub.call(1)' in main
+        assert 'sub.call(2).start()' in main
+        assert 'sub.call(3).start(wait_delay(1))' in main

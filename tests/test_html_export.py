@@ -130,3 +130,12 @@ class TestExportToHtmlIntegration:
             model=minimal_model, filename='test_min.html', path=str(tmp_path),
         )
         assert Path(output).exists()
+
+    def test_feature_model_export(self, feature_model, tmp_path):
+        output = export_to_html(
+            model=feature_model, filename='test_feat.html', path=str(tmp_path),
+        )
+        content = Path(output).read_text(encoding='utf-8')
+        assert 'yield sub.call(1)' in content
+        assert 'sub.call(2).start()' in content
+        assert 'sub.call(3).start(wait_delay(1))' in content

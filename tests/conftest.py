@@ -1,5 +1,11 @@
 """Shared test fixtures: lightweight pycomod models for the export tests."""
 
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+
 import pytest
 import pycomod as pcm
 
@@ -164,6 +170,85 @@ class WaitTypesModel(pcm.Model):
             yield self.wait_sequence(self.wait_delay(3), self.wait_delay(4))
 
         self.set_available(locals(), output=(A, B))
+
+
+class Leak(pcm.Model):
+    """Sub-model: integer pool draining into an external pool."""
+
+    def build(self):
+        """Define the model elements."""
+        P = self.pool(10, pool_type='int')
+        Out = self.pool(external=True)
+        F = self.flow(lambda: P * 0.25, src=P, dest=Out)
+        return locals()
+
+
+class FeatureModel(pcm.Model):
+    """Model using the flow and sub-process variants in one place.
+
+    Integer pool, discrete flow, external pool + connect, allow_neg,
+    custom variance, when guard, limit, and sub-processes started with
+    yield, .start() and .start(wait).
+    """
+
+    def build(self):
+        """Define the model elements."""
+        leak = self.submodel(Leak())
+        Sink = self.pool(0)
+        leak.Out.connect(Sink)
+        N = self.pool(0, allow_neg=True)
+        A = self.pool(100)
+        E = self.pool(0)
+        f_neg = self.flow(lambda: 2, src=N)
+        f_var = self.flow(lambda: 1, src=A, stochastic=True,
+                          variance=lambda: 0.5)
+        f_when = self.flow(lambda: 1, src=A, when=lambda: self.t() <= 5)
+        f_limit = self.flow(lambda: 1, src=A, limit=3)
+
+        @self.process
+        def sub(n):
+            E.add(n)
+            yield self.wait_delay(2)
+            return n
+
+        @self.process(start=self.wait_time(1))
+        def main():
+            r = yield sub(1)
+            E.add(r)
+            sub(2).start()
+            sub(3).start(self.wait_delay(1))
+
+        self.set_available(locals(), output=(leak, Sink, N, A, E))
+
+
+@pytest.fixture
+def feature_model():
+    """Return a built FeatureModel."""
+    return FeatureModel()
+
+
+@pytest.fixture
+def run_js():
+    """Return a function that runs JS in Node and returns its JSON output.
+
+    Tests using it are skipped when Node.js is not installed.
+    """
+    if shutil.which('node') is None:
+        pytest.skip('Node.js not installed')
+
+    def _run(code):
+        with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False,
+                                         encoding='utf-8') as f:
+            f.write('var window = {}\n' + code)
+        try:
+            res = subprocess.run(['node', f.name], capture_output=True,
+                                 text=True)
+        finally:
+            os.remove(f.name)
+        assert res.returncode == 0, res.stderr[-500:]
+        return json.loads(res.stdout)
+
+    return _run
 
 
 @pytest.fixture

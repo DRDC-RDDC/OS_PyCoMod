@@ -171,3 +171,29 @@ class TestInspectModelWaitTypes:
         procs = inspect_model(wait_types_model)['processes']
         assert procs['p_waits']['start_type'] == 'time'
         assert procs['p_waits']['start_value'] == 0
+
+
+class TestInspectFeatureModel:
+    """Flow variants, external pools and sub-processes."""
+
+    def test_pools(self, feature_model):
+        pools = inspect_model(feature_model)['pools']
+        assert pools['leak__P']['type'] == 'int'
+        assert pools['N']['allow_negative'] is True
+        assert 'leak__Out' not in pools  # external pool, resolved by connect
+
+    def test_flows(self, feature_model):
+        flows = inspect_model(feature_model)['flows']
+        assert flows['leak__F']['discrete'] is True
+        assert flows['leak__F']['dest'] == 'Sink'  # connected external pool
+        assert flows['f_var']['variance_value'] == 0.5
+        assert flows['f_when']['when'] is not None
+        assert flows['f_limit']['limit'] == 3
+
+    def test_sub_processes(self, feature_model):
+        procs = inspect_model(feature_model)['processes']
+        assert procs['sub']['start_type'] is None
+        main = procs['main']['source']
+        assert 'yield sub(1)' in main
+        assert 'sub(2).start()' in main
+        assert 'sub(3).start(self.wait_delay(1))' in main

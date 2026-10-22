@@ -16,7 +16,7 @@ import pycomod as pcm
 from pycomod.export.model_inspector import inspect_model
 from pycomod.export.code_translator import CodeTranslator
 from pycomod.export.js_simulation_engine import generate_js_engine
-from pycomod.export.html_export import export_to_html
+from pycomod.export.html_export import export_to_html, translate_structure
 
 
 # -----------------------------------------------------------------------
@@ -469,3 +469,27 @@ class TestManualVerification:
             ),
         )
         print('HTML exported to: %s' % html_path)
+
+
+class TestPythonJSParity:
+    """The JS engine reproduces Python _run for the feature model."""
+
+    def test_feature_model_matches_python(self, feature_model, run_js):
+        names = ['leak__P', 'Sink', 'N', 'A', 'E']
+        structure = inspect_model(feature_model)
+        engine = generate_js_engine(structure, translate_structure(structure))
+        js = run_js(engine + (
+            "\nconst r = run_simulation({}, {t_end: 10, dt: 1, outputs: %s},"
+            " false)\nconsole.log(JSON.stringify("
+            "{time: r.time, outputs: r.outputs}))" % names))
+
+        for flow in feature_model._flows:  # deterministic single run
+            flow.stochastic = False
+        feature_model._run(end=10)
+        out = feature_model._output
+        for name in names:
+            hist = out['leak']['P'] if name == 'leak__P' else out[name]
+            # Python adds rows at event times; compare the last per time
+            py = dict(zip(hist['times'], hist['values']))
+            for t, value in zip(js['time'], js['outputs'][name]):
+                assert value == pytest.approx(py[t]), (name, t)
