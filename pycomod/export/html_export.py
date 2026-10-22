@@ -60,6 +60,38 @@ def export_to_html(
 
     structure = inspect_model(model)
 
+    translated_code = translate_structure(structure)
+
+    js_engine = generate_js_engine(structure, translated_code)
+
+    ui_generator = BokehUIGenerator(
+        model_structure=structure,
+        title=title,
+        help_text=help_text,
+    )
+    layout = ui_generator.generate_layout()
+
+    attach_callbacks(ui_generator, js_engine)
+
+    output_file(str(output_filepath), title=title)
+    _resources = get_save_resources()
+    if _resources is not None:
+        save(layout, resources=_resources)
+    else:
+        save(layout)
+
+    _post_process_html(str(output_filepath), title=title)
+
+    return str(output_filepath)
+
+
+def translate_structure(structure: dict) -> dict:
+    """Translate a model structure's lambdas and processes to JS.
+
+    Returns JS expressions keyed by element name (when guards under
+    ``<flow>__when``); translated process bodies are stored on the
+    structure as ``js_body``.
+    """
     translator = CodeTranslator(
         element_map=structure['element_map'],
         submodel_names=structure['submodel_names'],
@@ -111,28 +143,7 @@ def export_to_html(
                 source, process_names=process_names, context_prefix=prefix)
             if result['success']:
                 info['js_body'] = result['javascript']
-
-    js_engine = generate_js_engine(structure, translated_code)
-
-    ui_generator = BokehUIGenerator(
-        model_structure=structure,
-        title=title,
-        help_text=help_text,
-    )
-    layout = ui_generator.generate_layout()
-
-    attach_callbacks(ui_generator, js_engine)
-
-    output_file(str(output_filepath), title=title)
-    _resources = get_save_resources()
-    if _resources is not None:
-        save(layout, resources=_resources)
-    else:
-        save(layout)
-
-    _post_process_html(str(output_filepath), title=title)
-
-    return str(output_filepath)
+    return translated_code
 
 
 def _logo_img(svg_name: str, css_class: str, alt: str) -> str:
