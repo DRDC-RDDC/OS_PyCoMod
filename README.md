@@ -1,5 +1,22 @@
 # OS_PyCoMod
 
+## HTML export (`html` branch)
+
+This branch adds `pcm.export_to_html`, which turns a PyCoMod model into a single standalone HTML file that runs in any browser without Python. The model's equations, flows and processes are translated to JavaScript, and the page provides a Bokeh-based interface for editing inputs, running single or Monte Carlo simulations (with percentile bands), saving and loading inputs, and exporting results as CSV or PNG. Supported features include stochastic flows, step and impulse functions, nested sub-models, and discrete-event processes (waits, conditions and messages).
+
+To get started, install the branch and export a model:
+
+    pip install git+https://github.com/DRDC-RDDC/OS_PyCoMod.git@html
+
+```Python
+import pycomod as pcm
+
+pcm.export_to_html(model=MyModel(), filename='my_model.html',
+                   title='My Model', help_text='# Notes shown in the Help tab')
+```
+
+Ready-made scripts are in [examples/](examples/) (e.g. `python examples/sir_export.py`), with their generated HTML alongside, and tests can be run with `pytest tests`.
+
 ## Introduction
 
 PyCoMod is a Python package for building and running compartment models derived from systems of differential equations such as the Susceptible-Infectious-Recovered (SIR)model of infectious diseases.
