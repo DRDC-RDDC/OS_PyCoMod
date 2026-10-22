@@ -14,8 +14,8 @@ __pycache__/
 .ipynb_checkpoints/
 *.html
 !templates/html/*.html
+!examples/**/*.html
 test_outputs/
 
-.claude/settings.local.json
 venv
 .vscode/
