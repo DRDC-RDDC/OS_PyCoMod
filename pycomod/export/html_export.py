@@ -10,7 +10,7 @@ from bokeh.io import output_file, save
 
 from ..model import Model
 from .model_inspector import inspect_model
-from .code_translator import CodeTranslator
+from .code_translator import CodeTranslator, ExportTranslationError
 from .js_simulation_engine import generate_js_engine
 from .bokeh_ui_generator import BokehUIGenerator
 from .bokeh_compat import BOKEH_2, get_save_resources
@@ -99,22 +99,21 @@ def translate_structure(structure: dict) -> dict:
     translated_code = {}
 
     for name, info in structure.get('equations', {}).items():
+        # Step and impulse are built natively in JS; no lambda to translate.
+        if info.get('type') in ('step', 'impulse'):
+            continue
         source = info.get('func_info', {}).get('source')
         if source:
             prefix = '__'.join(name.split('__')[:-1])
             result = translator.translate_lambda(source, context_prefix=prefix)
-            translated_code[name] = (
-                result['javascript'] if result['success'] else '0'
-            )
+            translated_code[name] = _require_js(result, name)
 
     for name, info in structure.get('flows', {}).items():
         source = info.get('rate_func', {}).get('source')
         if source:
             prefix = '__'.join(name.split('__')[:-1])
             result = translator.translate_lambda(source, context_prefix=prefix)
-            translated_code[name] = (
-                result['javascript'] if result['success'] else '0'
-            )
+            translated_code[name] = _require_js(result, name)
 
         when_info = info.get('when')
         if when_info is not None:
@@ -130,9 +129,8 @@ def translate_structure(structure: dict) -> dict:
                 prefix = '__'.join(name.split('__')[:-1])
                 result = translator.translate_lambda(
                     when_source, context_prefix=prefix)
-                translated_code[name + '__when'] = (
-                    result['javascript'] if result['success'] else 'true'
-                )
+                translated_code[name + '__when'] = _require_js(
+                    result, name + ' (when=)')
 
     process_names = set(structure.get('processes', {}).keys())
     for name, info in structure.get('processes', {}).items():
@@ -141,9 +139,18 @@ def translate_structure(structure: dict) -> dict:
             prefix = '__'.join(name.split('__')[:-1])
             result = translator.translate_process(
                 source, process_names=process_names, context_prefix=prefix)
-            if result['success']:
-                info['js_body'] = result['javascript']
+            info['js_body'] = _require_js(result, name)
     return translated_code
+
+
+def _require_js(result: dict, element_name: str) -> str:
+    """Return the translated JS, or raise with the element and its source."""
+    if result['success']:
+        return result['javascript']
+    raise ExportTranslationError(
+        "Cannot export '%s' to HTML.\n  Source: %s\n  Problem: %s"
+        % (element_name, result['python_source'].strip(),
+           '; '.join(result['errors']) or 'unknown translation error'))
 
 
 def _logo_img(svg_name: str, css_class: str, alt: str) -> str:

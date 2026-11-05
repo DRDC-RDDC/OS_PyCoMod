@@ -6,6 +6,10 @@ import textwrap
 from typing import Dict, Any, Optional, Set, List
 
 
+class ExportTranslationError(ValueError):
+    """Raised when model code cannot be translated to JavaScript."""
+
+
 class CodeTranslator:
     """Translate PyCoMod lambdas and processes to JavaScript."""
 
@@ -57,6 +61,10 @@ class CodeTranslator:
                 result['errors'].append('Could not extract lambda body')
                 return result
 
+            result['errors'].extend(self._unsupported_constructs(lambda_body))
+            if result['errors']:
+                return result
+
             result['javascript'] = self._translate_expression(
                 lambda_body, context_prefix)
             result['success'] = True
@@ -65,6 +73,37 @@ class CodeTranslator:
             result['errors'].append('Translation error: %s' % str(e))
 
         return result
+
+    def _unsupported_constructs(self, body: str) -> List[str]:
+        """List the parts of a lambda body that cannot be translated to JS."""
+        try:
+            tree = ast.parse(body.strip(), mode='eval')
+        except SyntaxError as e:
+            return ['Could not parse lambda body %r: %s' % (body, e.msg)]
+
+        unsupported = {
+            ast.Is: "'is'", ast.IsNot: "'is not'",
+            ast.In: "'in'", ast.NotIn: "'not in'",
+            ast.Lambda: 'nested lambda', ast.NamedExpr: "':='",
+            ast.ListComp: 'list comprehension',
+            ast.SetComp: 'set comprehension',
+            ast.DictComp: 'dict comprehension',
+            ast.GeneratorExp: 'generator expression',
+            ast.Dict: 'dict literal', ast.Set: 'set literal',
+            ast.JoinedStr: 'f-string', ast.Starred: "'*' unpacking",
+            ast.MatMult: "'@'",
+        }
+        errors = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Compare) and len(node.ops) > 1:
+                errors.append(
+                    'Chained comparison %r is not supported; write it with '
+                    "'and', e.g. 'a < b and b < c'" % ast.unparse(node))
+            for node_type, label in unsupported.items():
+                if isinstance(node, node_type):
+                    errors.append('%s is not supported in exported lambdas'
+                                  % label)
+        return errors
 
     def _extract_lambda_body(self, source: str) -> Optional[str]:
         patterns = [
@@ -116,6 +155,44 @@ class CodeTranslator:
 
     def _translate_expression(self, expr: str,
                               context_prefix: str = '') -> str:
+        """Translate an expression, turning ``a if c else b`` into ternaries.
+
+        Each conditional expression is replaced with a placeholder name,
+        its parts are translated recursively, and the results are
+        substituted back as ``(c ? a : b)``.
+        """
+        try:
+            tree = ast.parse(expr.strip(), mode='eval')
+        except SyntaxError:
+            return self._translate_simple_expression(expr, context_prefix)
+
+        if not any(isinstance(n, ast.IfExp) for n in ast.walk(tree)):
+            return self._translate_simple_expression(expr, context_prefix)
+
+        placeholders: Dict[str, str] = {}
+        translator = self
+
+        class _IfExpReplacer(ast.NodeTransformer):
+            def visit_IfExp(self, node):
+                key = '__pcm_ifexp_%d__' % len(placeholders)
+                placeholders[key] = '(%s ? %s : %s)' % (
+                    translator._translate_expression(
+                        ast.unparse(node.test), context_prefix),
+                    translator._translate_expression(
+                        ast.unparse(node.body), context_prefix),
+                    translator._translate_expression(
+                        ast.unparse(node.orelse), context_prefix),
+                )
+                return ast.Name(id=key, ctx=ast.Load())
+
+        outer = ast.unparse(_IfExpReplacer().visit(tree))
+        js_expr = self._translate_simple_expression(outer, context_prefix)
+        for key, value in placeholders.items():
+            js_expr = js_expr.replace(key, value)
+        return js_expr
+
+    def _translate_simple_expression(self, expr: str,
+                                     context_prefix: str = '') -> str:
         js_expr = expr
 
         js_expr = js_expr.replace('self.t()', 'sim_context.sim_time')
@@ -419,10 +496,9 @@ class _ProcessJSVisitor:
         elif isinstance(node, ast.Pass):
             return []
 
-        return [
-            '%s/* untranslated: %s */'
-            % (self._indent(indent), type(node).__name__)
-        ]
+        raise NotImplementedError(
+            '%s statement is not supported (line %s)'
+            % (type(node).__name__, getattr(node, 'lineno', '?')))
 
     def _visit_expr(self, node) -> str:
         if isinstance(node, ast.Constant):
@@ -459,6 +535,10 @@ class _ProcessJSVisitor:
             return '(%s)' % op.join(parts)
 
         elif isinstance(node, ast.Compare):
+            if len(node.ops) > 1:
+                raise NotImplementedError(
+                    "Chained comparison %r is not supported (line %s); "
+                    "write it with 'and'" % (ast.unparse(node), node.lineno))
             parts = [self._visit_expr(node.left)]
             for op, comparator in zip(node.ops, node.comparators):
                 parts.append(self._cmpop_symbol(op))
@@ -485,11 +565,16 @@ class _ProcessJSVisitor:
         elif isinstance(node, ast.Yield):
             return 'yield %s' % self._yield_value(node)
 
+        elif isinstance(node, ast.Lambda):
+            return '() => %s' % self._visit_expr(node.body)
+
         elif isinstance(node, (ast.Tuple, ast.List)):
             elts = [self._visit_expr(e) for e in node.elts]
             return '[%s]' % ', '.join(elts)
 
-        return '/* ? %s */' % type(node).__name__
+        raise NotImplementedError(
+            '%s is not supported (line %s)'
+            % (type(node).__name__, getattr(node, 'lineno', '?')))
 
     def _yield_value(self, node: ast.Yield) -> str:
         if node.value is None:
@@ -636,11 +721,17 @@ class _ProcessJSVisitor:
             ast.BitAnd: '&', ast.BitOr: '|', ast.BitXor: '^',
             ast.LShift: '<<', ast.RShift: '>>',
         }
-        return ops.get(type(op), '?')
+        if type(op) not in ops:
+            raise NotImplementedError(
+                'Operator %s is not supported' % type(op).__name__)
+        return ops[type(op)]
 
     def _cmpop_symbol(self, op) -> str:
         ops = {
             ast.Eq: '===', ast.NotEq: '!==', ast.Lt: '<', ast.LtE: '<=',
             ast.Gt: '>', ast.GtE: '>=',
         }
-        return ops.get(type(op), '?')
+        if type(op) not in ops:
+            raise NotImplementedError(
+                'Operator %s is not supported' % type(op).__name__)
+        return ops[type(op)]

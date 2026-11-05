@@ -3,7 +3,7 @@
 import re
 from typing import Dict, Any
 from .template_loader import get_loader
-from .code_translator import CodeTranslator
+from .code_translator import CodeTranslator, ExportTranslationError
 
 
 class JavaScriptSimulationEngine:
@@ -165,7 +165,11 @@ class JavaScriptSimulationEngine:
             cond_source, context_prefix=prefix)
         if result['success']:
             return '() => %s' % result['javascript']
-        return '() => false'
+        raise ExportTranslationError(
+            "Cannot export start condition of '%s' to HTML.\n"
+            "  Source: %s\n  Problem: %s"
+            % (process_name, str(cond_source).strip(),
+               '; '.join(result['errors'])))
 
     def _generate_process_initialization(self):
         processes = self.model_structure.get('processes', {})
